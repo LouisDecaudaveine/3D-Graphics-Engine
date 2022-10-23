@@ -11,13 +11,15 @@
 #include <string_view>
 #include <sstream>
 #include <unordered_map>
+#include <cmath>
 
-#define WIDTH 600
-#define HEIGHT 600
+#define WIDTH 400
+#define HEIGHT 400
 
 float halfW = WIDTH/2;
 float halfH = HEIGHT/2;
  
+
 std::vector<float> interpolateSingleFloats(float from, float to, size_t numberOfValues) {
 	std::vector<float> result;
 	float inc = (to-from)/(numberOfValues-1);
@@ -118,9 +120,12 @@ void depthLine(CanvasPoint &from, CanvasPoint &to, Colour &col, float depth, Dra
 	for(float i = 0; i<pixelsNeeded; i++){
 		float x = std::round(from.x+ xStepSize * i);
 		float y = std::round(from.y+ yStepSize * i);
-		if(depth>=depthBuffer[int(x)][int(y)]){
+		if(depth > depthBuffer[int(x)][int(y)]){
 			window.setPixelColour(x,y,colour);
 			depthBuffer[int(x)][int(y)] = depth;
+		}
+		if(depth == depthBuffer[int(x)][int(y)] && rand() % 10 > 5){
+			window.setPixelColour(x,y,colour);
 		}
 	}
 	
@@ -180,8 +185,8 @@ std::vector<CanvasTriangle> splitTriangle(std::vector<CanvasPoint> &orderedPoint
 	float coef = (orderedPoints[2].y - orderedPoints[1].y)/(orderedPoints[2].y - orderedPoints[0].y);
 	CanvasPoint splitPoint;
 	splitPoint.y = orderedPoints[1].y;
-	splitPoint.x = round((orderedPoints[0].x-orderedPoints[2].x)*coef) + orderedPoints[2].x;
-	splitPoint.depth = orderedPoints[1].depth;
+	splitPoint.x = (orderedPoints[0].x-orderedPoints[2].x)*coef + orderedPoints[2].x;
+	splitPoint.depth = (orderedPoints[0].depth-orderedPoints[2].depth)*coef + orderedPoints[2].depth;
 
 	CanvasTriangle topTrig(orderedPoints[0], orderedPoints[1], splitPoint);
 	CanvasTriangle bottomTrig(orderedPoints[1], splitPoint, orderedPoints[2]);
@@ -196,6 +201,10 @@ void fillTrig(CanvasTriangle &triangle, Colour &col, DrawingWindow &window){
 	int yDirection = (height > 0) ? 1 : -1;
 	height = std::abs(height);
 	std::vector<float> linesDepth = interpolateSingleFloats(triangle.v0().depth, triangle.v2().depth, height);
+	// for(float de : linesDepth){
+	// 	std::cout<< de  << "|";
+	// }
+	// std::cout<<std::endl;
 	std::vector<float> startCoords = interpolateSingleFloats(triangle.v0().x, triangle.v2().x,height);
 	std::vector<float> endCoords;
 	//if the triangle is flat on top
@@ -436,9 +445,11 @@ void consoleTriangles(){
 //#############################################
 
 CanvasPoint getCanvasIntersectionPoint(glm::vec3 cameraPosition, glm::vec3 vertexPosition, float focalLength){
-	float xIntersection = std::round(focalLength * (-1*(vertexPosition[0]-cameraPosition[0])/(vertexPosition[2]-cameraPosition[2])) + (WIDTH/2));
-	float yIntersection = std::round(focalLength * ((vertexPosition[1]-cameraPosition[1])/(vertexPosition[2]-cameraPosition[2])) + (HEIGHT/2));
-	float depth = 1 / (std::abs(cameraPosition[2]-vertexPosition[2]));
+	
+	float xIntersection = std::round(focalLength * (-1.0f*(vertexPosition[0]-cameraPosition[0])/(vertexPosition[2]-cameraPosition[2])) + (WIDTH/2.0f));
+	float yIntersection = std::round(focalLength * ((vertexPosition[1]-cameraPosition[1])/(vertexPosition[2]-cameraPosition[2])) + (HEIGHT/2.0f));
+	float distanceCV = std::sqrt(std::pow(cameraPosition[0]-vertexPosition[0],2) + std::pow(cameraPosition[1]-vertexPosition[1],2) + std::pow(cameraPosition[2]-vertexPosition[2],2));
+	float depth = 1.0f / (distanceCV);
 	CanvasPoint intersectionPoint(xIntersection,yIntersection,depth);
 	return intersectionPoint;
 }
@@ -513,6 +524,7 @@ void handleEvent(SDL_Event event, DrawingWindow &window) {
 			// strokedTriangle(trigi,col,window);
 			// filledTriangle(trigi,col,window);
 		}
+		std::cout << "(" << xCamera << "," << yCamera << "," <<zCamera << ")" << std::endl;
 
 	} else if (event.type == SDL_MOUSEBUTTONDOWN) {
 		window.savePPM("output.ppm");
@@ -541,6 +553,7 @@ int main(int argc, char *argv[]) {
 		setBufferToZero();
 		glm::vec3 cameraPosition(xCamera,yCamera,zCamera);
 		filledFrame(cameraPosition,focalDistance,window);
+		// wireFrame(cameraPosition, focalDistance, window);
 		// We MUST poll for events - otherwise the window will freeze !
 		if (window.pollForInputEvents(event)) handleEvent(event, window);
 		// z-=0.001;
