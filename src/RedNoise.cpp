@@ -12,6 +12,7 @@
 #include <sstream>
 #include <unordered_map>
 #include <cmath>
+#include <RayTriangleIntersection.h>
 
 #define WIDTH 800
 #define HEIGHT 800
@@ -20,6 +21,7 @@ float halfW = WIDTH/2;
 float halfH = HEIGHT/2;
 
 glm::vec3 cameraPosition(0.0,0.0,4.0);
+glm::vec3 origin(0.0f,0.0f,0.0f);
 
 glm::vec3 rightO(1.0f,0.0f,0.0f);
 glm::vec3 upO(0.0f,1.0f,0.0f);
@@ -31,8 +33,13 @@ float focalDistance = HEIGHT;
 float xAngle = 0;
 float yAngle = 0;
 
+//this might come back to bite if the object gets moved
+glm::vec3 lightCoord(0.0f * 0.35, 2.0f * 0.35, 2.0f * 0.35);
 float orbitState = 1.55;
 uint32_t drawState = 0;
+
+//for debugging stepping through each triangle is the index of triangle being rendered
+int currentTrig = 0;
 
 
 std::vector<float> interpolateSingleFloats(float from, float to, size_t numberOfValues) {
@@ -471,7 +478,7 @@ glm::mat3 yRotation(){
 void pointAt(glm::vec3 pointTo){
 	glm::vec3 vertical(0,1,0);
 	//forward
-	cameraOrientation[2] =  glm::normalize(pointTo);
+	cameraOrientation[2] =  glm::normalize(cameraPosition + pointTo);
 	//right
 	cameraOrientation[0] = glm::cross(vertical, cameraOrientation[2]);
 	//up
@@ -529,27 +536,164 @@ void filledFrame(glm::vec3 cameraPosition, float focalLength, DrawingWindow &win
 //#############################################
 //#############################################
 
+//###############RAY-TRACING###################
+//#############################################
+
+glm::vec3 testRay(0,0.1,-1.0);
+
+
+RayTriangleIntersection  getClosestIntersection(glm::vec3 rayDirection,glm::vec3 startPoint){
+	RayTriangleIntersection closest = RayTriangleIntersection();
+	closest.distanceFromCamera = 100.0f;
+	closest.triangleIndex = -1;
+	for(uint32_t i =0; i<modelTriangles.size(); i++){
+		ModelTriangle triangle = modelTriangles[i];
+		glm::vec3 e0 = triangle.vertices[1] - triangle.vertices[0];
+		glm::vec3 e1 = triangle.vertices[2] - triangle.vertices[0];
+		glm::vec3 SPVector = startPoint - triangle.vertices[0];
+		glm::mat3 DEMatrix(-rayDirection, e0, e1);
+		glm::vec3 possibleSolution = glm::inverse(DEMatrix) * SPVector;
+		float u = possibleSolution[1];
+		float v = possibleSolution[2];
+		if(possibleSolution[0]<closest.distanceFromCamera &&  possibleSolution[0] > 0 && (u >= 0.0) && (u <= 1.0) && (v >= 0.0) && (v <= 1.0) && (u + v) <= 1.0){
+			glm::vec3 pointPos = triangle.vertices[0] + u*e0 + v*e1;
+			closest = RayTriangleIntersection(pointPos, possibleSolution[0], triangle, i);
+		} 
+	}
+	return closest;
+}
+
+glm::vec3 getRayDirection(int x, int y){
+	glm::vec3 rayDirection(0.0f,0.0f,-1.0f);
+	float rayX = (x- WIDTH/2)/focalDistance;
+	float rayY = -1*(y- HEIGHT/2)/focalDistance;
+	rayDirection[0] = rayX;
+	rayDirection[1] = rayY;
+	rayDirection = cameraOrientation * glm::normalize(rayDirection);
+	return rayDirection;
+}
+
+void drawRayTrace(DrawingWindow &window){
+	
+	for(int y=0;y<HEIGHT;y++){
+		for(int x =0; x<WIDTH; x++){
+			glm::vec3 rayDirection = getRayDirection(x,y);
+			RayTriangleIntersection closestIntersection = getClosestIntersection(rayDirection, cameraPosition);
+			// std::cout << rayDirection[0] << "," << rayDirection[1] << "," << rayDirection[2] << "," <<std::endl << closestIntersection << std::endl;
+			Colour col;
+			
+
+			if(closestIntersection.triangleIndex == -1) col = Colour(0,0,0);
+			else {
+				glm::vec3 lightToPointRay  = glm::normalize(closestIntersection.intersectionPoint - lightCoord);
+				float dist = glm::distance(closestIntersection.intersectionPoint, lightCoord);
+				RayTriangleIntersection closestPointToLight = getClosestIntersection(lightToPointRay, lightCoord);
+				if(closestPointToLight.triangleIndex != closestIntersection.triangleIndex) {
+					//this is checking if the intersection point is not too close to the original point, fixes diagonal acnee
+					// higher values in the if reduced acnee lower makes shadow more accurate
+					float blockingDistance = std::abs(closestPointToLight.distanceFromCamera - dist);
+					if(blockingDistance > 0.015) col = Colour(0,0,0);
+					else {
+						col = closestIntersection.intersectedTriangle.colour; 
+					}
+				}
+				else col = closestIntersection.intersectedTriangle.colour;
+			}
+			uint32_t colour = (255 << 24) + (int(col.red)<<16) + (int(col.green)<<8) + int(col.blue);
+			window.setPixelColour(x,y,colour);
+		}
+	}
+	
+}
+
+
+//#############################################
+//#############################################
+
+//################DEBUGGING####################
+//#############################################
+bool printState = true;
+void oneStepRender(DrawingWindow &window){
+	ModelTriangle trig = modelTriangles[currentTrig];
+	if(printState){
+		std::cout << "triangle index: " << currentTrig << std::endl;
+		std::cout << trig << std::endl;	
+	}
+	// really stupid way of making sure this prints once
+	printState = false;
+	
+	Colour col = trig.colour;
+	CanvasPoint v0 = getCanvasIntersectionPoint(cameraPosition,trig.vertices[0], focalDistance);
+	CanvasPoint v1 = getCanvasIntersectionPoint(cameraPosition,trig.vertices[1], focalDistance);
+	CanvasPoint v2 = getCanvasIntersectionPoint(cameraPosition,trig.vertices[2], focalDistance);
+	CanvasTriangle canvTrig(v0,v1,v2);
+	filledTriangle(canvTrig,col,window);
+	// wireFrame(cameraPosition, focalDistance, window);
+}
+
+void next(){
+	if(currentTrig < modelTriangles.size()) currentTrig++;
+	else currentTrig = 0;
+}
+
+void back(){
+	if(currentTrig > 0) currentTrig--;
+	else currentTrig = modelTriangles.size()-1;
+}
+
+
+//##############################################
+//##############################################
 
 void orbit(DrawingWindow &window){
-	glm::vec3 origin(0.0,0.0,0.0);
+	
 	cameraPosition[0] = 4 * cos(orbitState);
 	cameraPosition[2] = 4 * sin(orbitState);
-	pointAt(cameraPosition);
+	pointAt(origin);
 	// filledFrame(cameraPosition,focalDistance,window);
 	wireFrame(cameraPosition,focalDistance, window);
 	orbitState+= 0.02;
 }
-
+bool rayTraced = true;
 void handleEvent(SDL_Event event, DrawingWindow &window) {
 	if (event.type == SDL_KEYDOWN) {
-		if (event.key.keysym.sym == SDLK_LEFT) cameraPosition[0] -= 0.01;
-		else if (event.key.keysym.sym == SDLK_RIGHT) cameraPosition[0] += 0.01;
-		else if (event.key.keysym.sym == SDLK_UP) cameraPosition[1] += 0.01;
-		else if (event.key.keysym.sym == SDLK_DOWN) cameraPosition[1] -=0.01;
+		if (event.key.keysym.sym == SDLK_LEFT) {
+			lightCoord[0] -= 0.1;
+			rayTraced =false;
+		}
+		else if (event.key.keysym.sym == SDLK_RIGHT) {
+			lightCoord[0] += 0.1;
+			rayTraced =false;
+		}
+		else if (event.key.keysym.sym == SDLK_UP) {
+			lightCoord[2] += 0.1;
+			rayTraced =false;
+		}
+		else if (event.key.keysym.sym == SDLK_DOWN) {
+			lightCoord[2] -=0.1;
+			rayTraced =false;
+		}
+		// else if (event.key.keysym.sym == SDLK_LEFT) cameraPosition[0] -= 0.01;
+		// else if (event.key.keysym.sym == SDLK_RIGHT) cameraPosition[0] += 0.01;
+		// else if (event.key.keysym.sym == SDLK_UP) cameraPosition[1] += 0.01;
+		// else if (event.key.keysym.sym == SDLK_DOWN) cameraPosition[1] -=0.01;
 		else if (event.key.keysym.sym == SDLK_w) cameraPosition[2] -=0.01;
 		else if (event.key.keysym.sym == SDLK_s) cameraPosition[2] +=0.01;
+		else if (event.key.keysym.sym == SDLK_r) drawState = 4;	
+		else if (event.key.keysym.sym == SDLK_d) drawState = 2;	
 		else if (event.key.keysym.sym == SDLK_o) drawState = 1;
 		else if (event.key.keysym.sym == SDLK_p) drawState = 0;
+		else if (event.key.keysym.sym == SDLK_z) drawState = 3;
+		else if (event.key.keysym.sym == SDLK_n) {
+			next();
+			printState = true;
+			oneStepRender(window);
+		}
+		else if (event.key.keysym.sym == SDLK_b) {
+			back();
+			printState = true;
+			oneStepRender(window);
+		}
 		else if (event.key.keysym.sym == SDLK_i){
 			xAngle =0.005f;
 			cameraOrientation = xRotation() * cameraOrientation;
@@ -592,8 +736,9 @@ void handleEvent(SDL_Event event, DrawingWindow &window) {
 void draw(DrawingWindow &window){
 	window.clearPixels();
 	if(drawState == 0) filledFrame(cameraPosition,focalDistance,window);
-	if (drawState == 1) orbit(window);
-	
+	if(drawState == 1) orbit(window);
+	if(drawState == 2) oneStepRender(window);
+	if(drawState == 3)wireFrame(cameraPosition,focalDistance, window);
 	
 	// wireFrame(cameraPosition, focalDistance, window);
 
@@ -625,21 +770,37 @@ int main(int argc, char *argv[]) {
 	setBufferToZero();
 	ObjParserMaterial("cornell-box.mtl");
 	ObjParserTriangle("cornell-box.obj", 0.35);
+
+
+	uint32_t colour = (255 << 24) + (int(255)<<16) + (int(0)<<8) + int(150);
 	// wireFrame(cameraPosition,focalDistance,window);
 	// filledFrame(cameraPosition,focalDistance,window);
 	// consoleTriangles();
-	
-	
-	
+
 	while (true) {
-		window.clearPixels();
+
+		if(drawState <4){
+			window.clearPixels();
+			draw(window);
+			rayTraced = false;
+		}
+		else if(!rayTraced && drawState == 4){
+			drawRayTrace(window);
+			CanvasPoint lightCenter = getCanvasIntersectionPoint(cameraPosition,lightCoord, focalDistance);
+			window.setPixelColour(lightCenter.x,lightCenter.y,colour);
+			window.setPixelColour(lightCenter.x + 1,lightCenter.y,colour);
+			window.setPixelColour(lightCenter.x - 1,lightCenter.y,colour);
+			window.setPixelColour(lightCenter.x,lightCenter.y+1,colour);
+			window.setPixelColour(lightCenter.x - 1,lightCenter.y-1,colour);
+			rayTraced = true;
+		}
+		
 		setBufferToZero();
 		
 		
 		// We MUST poll for events - otherwise the window will freeze !
 		if (window.pollForInputEvents(event)) handleEvent(event, window);
-
-		draw(window);
+		// draw(window);
 		// Need to render the frame at the end, or nothing actually gets shown on the screen !
 		window.renderFrame();
 	}
