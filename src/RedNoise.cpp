@@ -9,7 +9,7 @@
 #include <glm/glm.hpp>
 #include <ModelTriangle.h> 
 #include <string_view>
-#include <sstream>
+#include <sstream> 	
 #include <unordered_map>
 #include <cmath>
 #include <RayTriangleIntersection.h>
@@ -34,7 +34,8 @@ float xAngle = 0;
 float yAngle = 0;
 
 //this might come back to bite if the object gets moved
-glm::vec3 lightCoord(0.0f * 0.35, 2.0f * 0.35, 2.0f * 0.35);
+glm::vec3 lightCoord(0.6,0.3,2.0);
+// glm::vec3 lightCoord(-2.5,0.7,0.4);
 float orbitState = 1.55;
 uint32_t drawState = 0;
 
@@ -375,8 +376,11 @@ void filledTriangle(CanvasTriangle &triangle, Colour &col, DrawingWindow &window
 //===============================================
 
 std::vector<ModelTriangle> modelTriangles;
+//this is my convoluded way for finding the normals of each vertex
+std::vector<std::array<int,3>> triangleNormalIndexes;
 std::unordered_map<std::string,Colour> materialMap;
 std::vector<glm::vec3> allVertex;
+std::vector<glm::vec3> vertexNormals;
 
 
 std::vector<std::string> splitBySpace(std::string line){
@@ -409,14 +413,19 @@ void ObjParserMaterial(std::string path){
 		}
 	}
 }
-
 void ObjParserTriangle(std::string path, float scale){
     Colour currentColVal(255,255,255);
     std::string myText;
     std::ifstream MyReadFile(path);
     // std::vector<glm::vec3> allVertex;
     std::vector<ModelTriangle> allTriangles;
+	int addVertexIndex = 0;
     while(getline(MyReadFile,myText)){
+
+		if(myText[0] == 's'){
+			std::vector<std::string> split = splitBySpace(myText);
+			addVertexIndex = std::stoi(split[1]);
+		}
 
 		if(myText[0] == 'u'){
 			std::vector<std::string> split = splitBySpace(myText);
@@ -426,27 +435,46 @@ void ObjParserTriangle(std::string path, float scale){
         if(myText[0] == 'v'){
 			
             std::vector<std::string> listOfCoords = splitBySpace(myText);
-			// std::cout << listOfCoords[2] << std::endl;
             //need to start at index 1 since 0 is 'v'
             glm::vec3 vertex(std::stof(listOfCoords[1]), std::stof(listOfCoords[2]),std::stof(listOfCoords[3]));
             allVertex.push_back(scale * vertex);
+			vertexNormals.push_back(glm::vec3(0,0,0));
         }
         if(myText[0] == 'f'){
             std::vector<std::string> listOfVertex = splitBySpace(myText);
             for(int i=1; i<4;i++){
                 listOfVertex[i] = listOfVertex[i].substr(0,listOfVertex[i].size()-1);
             }
-            glm::vec3 v0 = allVertex[std::stoi(listOfVertex[1])-1];
-            glm::vec3 v1 = allVertex[std::stoi(listOfVertex[2])-1];
-            glm::vec3 v2 = allVertex[std::stoi(listOfVertex[3])-1];
+			//this is broken trying to get the indexes to match it real counter part
+			std::array<int, 3> indexes {
+				std::stoi(listOfVertex[1])-1,
+				std::stoi(listOfVertex[2])-1,
+				std::stoi(listOfVertex[3])-1
+				}; 
+			triangleNormalIndexes.push_back(indexes);std::vector<std::string> split = splitBySpace(myText);
 
+            glm::vec3 v0 = allVertex[indexes[0] + addVertexIndex];
+            glm::vec3 v1 = allVertex[indexes[1] + addVertexIndex];
+            glm::vec3 v2 = allVertex[indexes[2] + addVertexIndex];
             ModelTriangle triangle(v0,v1,v2,currentColVal);
 			//if this doesnt work then the normal is facing the opposite way
 			triangle.normal = glm::normalize(glm::cross((v1-v0),(v2-v0)));
 
+			vertexNormals[indexes[0] + addVertexIndex] += triangle.normal;
+			vertexNormals[indexes[1] + addVertexIndex] += triangle.normal;
+			vertexNormals[indexes[2] + addVertexIndex] += triangle.normal;
+			
             modelTriangles.push_back(triangle);
         }
     }
+
+	// //this assigns the normals for each of the vertices
+	for(int i =0; i<modelTriangles.size(); i++){
+		modelTriangles[i].verticesNormals[0] = glm::normalize(vertexNormals[triangleNormalIndexes[i][0]]);
+		modelTriangles[i].verticesNormals[1] = glm::normalize(vertexNormals[triangleNormalIndexes[i][1]]);
+		modelTriangles[i].verticesNormals[2] = glm::normalize(vertexNormals[triangleNormalIndexes[i][2]]);
+	}
+
 }
 
 
@@ -562,11 +590,11 @@ RayTriangleIntersection  getClosestIntersection(glm::vec3 rayDirection,glm::vec3
 		float v = possibleSolution[2];
 		if(possibleSolution[0]<closest.distanceFromCamera &&  possibleSolution[0] > 0 && (u >= 0.0) && (u <= 1.0) && (v >= 0.0) && (v <= 1.0) && (u + v) <= 1.0f){
 			glm::vec3 pointPos = triangle.vertices[0] + u*e0 + v*e1;
-			closest = RayTriangleIntersection(pointPos, possibleSolution[0], triangle, i);
+			closest = RayTriangleIntersection(pointPos, possibleSolution[0], triangle, i, u, v);
 		} 
 	}
 	return closest;
-}
+}	
 
 glm::vec3 getRayDirection(int x, int y){
 	glm::vec3 rayDirection(0.0f,0.0f,-1.0f);
@@ -594,15 +622,15 @@ glm::vec3 pointReflection(glm::vec3 surfaceNormal, glm::vec3 LightToPoint){
 }
 
 glm::vec3 specularColour(glm::vec3 colour, glm::vec3 pointToCamera, glm::vec3 pointReflection){
-	float specularExpo = std::pow(glm::dot(pointToCamera, pointReflection),256);
+	float specularExpo = std::pow(glm::dot(pointToCamera, pointReflection),64);
 	for(int i = 0; i < 3; i++){
-		colour[i] += std::floor(255*specularExpo);
+		colour[i] += std::floor(255* specularExpo);
 		if(colour[i] > 255) colour[i] = 255;
 	}
 	return colour;
 }
-
-void drawRayTrace(DrawingWindow &window){
+// int countBehind = 0;
+void drawRayTrace(DrawingWindow &window, int RayTraceState){
 	
 	for(int y=0;y<HEIGHT;y++){
 		for(int x =0; x<WIDTH; x++){
@@ -626,28 +654,48 @@ void drawRayTrace(DrawingWindow &window){
 				if(closestPointToLight.triangleIndex != closestIntersection.triangleIndex) {
 					//this is checking if the intersection point is not too close to the original point, fixes diagonal acnee
 					// higher values in the if reduced acnee lower makes shadow more accurate
+					//0.06 for circle looks pretty good but for sharp edges 0.015
 					float blockingDistance = std::abs(closestPointToLight.distanceFromCamera - lightToPointDistance);
-					if(blockingDistance > 0.025){
-						col = 0.1f * col;
-					} 
-					else {
-						pixelIntensity = 0.5f * proximityLighting(lightToPointDistance);
+					if(blockingDistance < 0.005){
+						// countBehind++;
+						closestIntersection = closestPointToLight;
+						glm::vec3 normal = closestIntersection.intersectedTriangle.normal;
+						if(RayTraceState == 0) {
+							normal = glm::normalize(
+								(closestIntersection.v*closestIntersection.intersectedTriangle.verticesNormals[2]) + 
+								(closestIntersection.u*closestIntersection.intersectedTriangle.verticesNormals[1]) + 
+								(closestIntersection.w*closestIntersection.intersectedTriangle.verticesNormals[0])
+							);
+						}
+						pixelIntensity = 0.05f * proximityLighting(lightToPointDistance);
 						//flippind direction of light ray to go from surface to light
 						lightToPointRay = -1.0f * lightToPointRay;
-						pixelIntensity += 0.5f * angleOfIncidence(closestIntersection.intersectedTriangle.normal, lightToPointRay);
+						pixelIntensity += 0.5f * std::pow(angleOfIncidence(normal, lightToPointRay),3);
 						
 						col = pixelIntensity * col; 
-						col = specularColour(col, (-1.0f * rayDirection), pointReflection(closestIntersection.intersectedTriangle.normal, lightToPointRay));
-
+						col = specularColour(col, (-1.0f * rayDirection), pointReflection(normal, lightToPointRay));
+						// col = glm::vec3(0,255,0);
+					} 
+					else {
+						col = 0.05f * col;
 					}
 				}
 				else {
+					glm::vec3 normal = closestIntersection.intersectedTriangle.normal;
+					if(RayTraceState == 0) {
+						normal = glm::normalize(
+							(closestIntersection.v*closestIntersection.intersectedTriangle.verticesNormals[2]) + 
+							(closestIntersection.u*closestIntersection.intersectedTriangle.verticesNormals[1]) + 
+							(closestIntersection.w*closestIntersection.intersectedTriangle.verticesNormals[0])
+						);
+					}
+
 					pixelIntensity = 0.5f * proximityLighting(lightToPointDistance);
 					//flippind direction of light ray to go from surface to light
 					lightToPointRay = -1.0f * lightToPointRay;
-					pixelIntensity += 0.5f * angleOfIncidence(closestIntersection.intersectedTriangle.normal, lightToPointRay);
+					pixelIntensity += 0.5f * std::pow(angleOfIncidence(normal, lightToPointRay),3);
 					col = pixelIntensity * col;
-					col = specularColour(col, (-1.0f * rayDirection), pointReflection(closestIntersection.intersectedTriangle.normal, lightToPointRay));
+					col = specularColour(col, (-1.0f * rayDirection), pointReflection(normal, lightToPointRay));
 				}
 			}
 
@@ -822,8 +870,8 @@ int main(int argc, char *argv[]) {
 	
 	setBufferToZero();
 	ObjParserMaterial("cornell-box.mtl");
-	ObjParserTriangle("cornell-box.obj", 0.35);
-	// ObjParserTriangle("sphere.obj", 0.35);
+	// ObjParserTriangle("cornell-box.obj", 0.35);
+	ObjParserTriangle("sphere.obj", 0.35);
 
 
 	uint32_t colour = (255 << 24) + (int(255)<<16) + (int(0)<<8) + int(150);
@@ -840,7 +888,9 @@ int main(int argc, char *argv[]) {
 		}
 		else if(!rayTraced && drawState == 4){
 			
-			drawRayTrace(window);
+			drawRayTrace(window,0);
+			// std::cout<< countBehind << std::endl;
+			// countBehind = 0;
 			coolVisual-= 0.05;
 			CanvasPoint lightCenter = getCanvasIntersectionPoint(cameraPosition,lightCoord, focalDistance);
 			window.setPixelColour(lightCenter.x,lightCenter.y,colour);
@@ -849,6 +899,7 @@ int main(int argc, char *argv[]) {
 			window.setPixelColour(lightCenter.x,lightCenter.y+1,colour);
 			window.setPixelColour(lightCenter.x - 1,lightCenter.y-1,colour);
 			rayTraced = true;
+			std::cout<< lightCoord[0] << "," << lightCoord[1] << "," << lightCoord[2] << std::endl;
 		}
 		
 		setBufferToZero();
