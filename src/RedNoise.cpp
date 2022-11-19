@@ -13,9 +13,10 @@
 #include <unordered_map>
 #include <cmath>
 #include <RayTriangleIntersection.h>
+#include <thread>
 
-#define WIDTH 800
-#define HEIGHT 800
+#define WIDTH 400
+#define HEIGHT 400
 
 float halfW = WIDTH/2;
 float halfH = HEIGHT/2;
@@ -588,7 +589,7 @@ RayTriangleIntersection  getClosestIntersection(glm::vec3 rayDirection,glm::vec3
 		glm::vec3 possibleSolution = glm::inverse(DEMatrix) * SPVector;
 		float u = possibleSolution[1];
 		float v = possibleSolution[2];
-		if(possibleSolution[0]<closest.distanceFromCamera &&  possibleSolution[0] > 0 && (u >= 0.0) && (u <= 1.0) && (v >= 0.0) && (v <= 1.0) && (u + v) <= 1.0f){
+		if(possibleSolution[0]<closest.distanceFromCamera &&  possibleSolution[0] >= 0.001 && (u >= 0.0) && (u <= 1.0) && (v >= 0.0) && (v <= 1.0) && (u + v) <= 1.0f){
 			glm::vec3 pointPos = triangle.vertices[0] + u*e0 + v*e1;
 			closest = RayTriangleIntersection(pointPos, possibleSolution[0], triangle, i, u, v);
 		} 
@@ -624,90 +625,55 @@ glm::vec3 pointReflection(glm::vec3 surfaceNormal, glm::vec3 LightToPoint){
 glm::vec3 specularColour(glm::vec3 colour, glm::vec3 pointToCamera, glm::vec3 pointReflection){
 	float specularExpo = std::pow(glm::dot(pointToCamera, pointReflection),64);
 	for(int i = 0; i < 3; i++){
-		colour[i] += std::floor(255* specularExpo);
-		if(colour[i] > 255) colour[i] = 255;
+		colour[i] += std::floor(254* specularExpo);
+		if(colour[i] > 255) colour[i] = 254;
 	}
 	return colour;
 }
-// int countBehind = 0;
-void drawRayTrace(DrawingWindow &window, int RayTraceState){
-	
-	for(int y=0;y<HEIGHT;y++){
-		for(int x =0; x<WIDTH; x++){
+
+uint8_t rayTracedState = 0;
+// this version may still change but I want to go from point to light not the other way 
+void  RayTracedRefactored(DrawingWindow&window){
+	for(uint16_t y=0; y<HEIGHT; y++){
+		for(uint16_t x=0; x<WIDTH; x++){
 			glm::vec3 rayDirection = getRayDirection(x,y);
 			RayTriangleIntersection closestIntersection = getClosestIntersection(rayDirection, cameraPosition);
-			// std::cout << rayDirection[0] << "," << rayDirection[1] << "," << rayDirection[2] << "," <<std::endl << closestIntersection << std::endl;
-			glm::vec3 col;
+			glm::vec3 colour(0,0,0);
+			float proximityLight;
+			float angleToLight;
 
-			//this is for proximity rayTrace
-			float pixelIntensity = 0.0;
-			if(closestIntersection.triangleIndex == -1) col = glm::vec3(0,0,0);
-			else {
-				col[0] =  closestIntersection.intersectedTriangle.colour.red; 
-				col[1] =  closestIntersection.intersectedTriangle.colour.green; 
-				col[2] =  closestIntersection.intersectedTriangle.colour.blue;
+			if(closestIntersection.triangleIndex != -1){
+				colour[0] =  closestIntersection.intersectedTriangle.colour.red; 
+				colour[1] =  closestIntersection.intersectedTriangle.colour.green; 
+				colour[2] =  closestIntersection.intersectedTriangle.colour.blue;
 
-				glm::vec3 lightToPointRay  = closestIntersection.intersectionPoint - lightCoord;
-				float lightToPointDistance = glm::length(lightToPointRay);
-				lightToPointRay = glm::normalize(lightToPointRay);
-				RayTriangleIntersection closestPointToLight = getClosestIntersection(lightToPointRay, lightCoord);
-				if(closestPointToLight.triangleIndex != closestIntersection.triangleIndex) {
-					//this is checking if the intersection point is not too close to the original point, fixes diagonal acnee
-					// higher values in the if reduced acnee lower makes shadow more accurate
-					//0.06 for circle looks pretty good but for sharp edges 0.015
-					float blockingDistance = std::abs(closestPointToLight.distanceFromCamera - lightToPointDistance);
-					if(blockingDistance < 0.005){
-						// countBehind++;
-						closestIntersection = closestPointToLight;
-						glm::vec3 normal = closestIntersection.intersectedTriangle.normal;
-						if(RayTraceState == 0) {
-							normal = glm::normalize(
-								(closestIntersection.v*closestIntersection.intersectedTriangle.verticesNormals[2]) + 
-								(closestIntersection.u*closestIntersection.intersectedTriangle.verticesNormals[1]) + 
-								(closestIntersection.w*closestIntersection.intersectedTriangle.verticesNormals[0])
-							);
-						}
-						pixelIntensity = 0.05f * proximityLighting(lightToPointDistance);
-						//flippind direction of light ray to go from surface to light
-						lightToPointRay = -1.0f * lightToPointRay;
-						pixelIntensity += 0.5f * std::pow(angleOfIncidence(normal, lightToPointRay),3);
-						
-						col = pixelIntensity * col; 
-						col = specularColour(col, (-1.0f * rayDirection), pointReflection(normal, lightToPointRay));
-						// col = glm::vec3(0,255,0);
-					} 
-					else {
-						col = 0.05f * col;
-					}
-				}
-				else {
+				glm::vec3 pointToLightRay = lightCoord - closestIntersection.intersectionPoint;
+				float pointToLightDistance = glm::length(pointToLightRay);
+				pointToLightRay = glm::normalize(pointToLightRay);
+
+				RayTriangleIntersection pointToLightIntersection = getClosestIntersection(pointToLightRay,closestIntersection.intersectionPoint);
+				if(pointToLightIntersection.distanceFromCamera >= pointToLightDistance){
 					glm::vec3 normal = closestIntersection.intersectedTriangle.normal;
-					if(RayTraceState == 0) {
+					if(rayTracedState == 0){
 						normal = glm::normalize(
-							(closestIntersection.v*closestIntersection.intersectedTriangle.verticesNormals[2]) + 
-							(closestIntersection.u*closestIntersection.intersectedTriangle.verticesNormals[1]) + 
-							(closestIntersection.w*closestIntersection.intersectedTriangle.verticesNormals[0])
-						);
+							(closestIntersection.v * closestIntersection.intersectedTriangle.verticesNormals[2]) + 
+							(closestIntersection.u * closestIntersection.intersectedTriangle.verticesNormals[1]) + 
+							(closestIntersection.w * closestIntersection.intersectedTriangle.verticesNormals[0])
+						); 
+
+						proximityLight = 0.5f * proximityLighting(pointToLightDistance);
+						angleToLight = 0.5f * std::pow(angleOfIncidence(normal, pointToLightRay),1);
+						colour = (proximityLight + angleToLight) * colour; 
+						colour = specularColour(colour, (-1.0f * rayDirection), pointReflection(normal, (-1.0f * pointToLightRay)));
 					}
-
-					pixelIntensity = 0.5f * proximityLighting(lightToPointDistance);
-					//flippind direction of light ray to go from surface to light
-					lightToPointRay = -1.0f * lightToPointRay;
-					pixelIntensity += 0.5f * std::pow(angleOfIncidence(normal, lightToPointRay),3);
-					col = pixelIntensity * col;
-					col = specularColour(col, (-1.0f * rayDirection), pointReflection(normal, lightToPointRay));
 				}
+				else colour = 0.05f * colour;
 			}
-
-			if(pixelIntensity > 1) std::cout<< (pixelIntensity) << std::endl;
-			uint32_t colour = (255 << 24) + (int(col[0])<<16) + (int(col[1])<<8) + int(col[2]);
-			window.setPixelColour(x,y,colour);
+			uint32_t col = (255 << 24) + (int(colour[0])<<16) + (int(colour[1])<<8) + int(colour[2]);
+			window.setPixelColour(x,y,col);
 		}
 	}
-	
 }
-
-
 //#############################################
 //#############################################
 
@@ -754,6 +720,8 @@ void orbit(DrawingWindow &window){
 	// filledFrame(cameraPosition,focalDistance,window);
 	wireFrame(cameraPosition,focalDistance, window);
 	orbitState+= 0.02;
+
+	// RayTracedRefactored(window);
 }
 bool rayTraced = true;
 void handleEvent(SDL_Event event, DrawingWindow &window) {
@@ -862,6 +830,22 @@ void draw(DrawingWindow &window){
 }
 
 
+//###########THREADING################
+//####################################
+
+void threadedRender(uint16_t threadCount){
+	std::vector<std::thread> threads;
+	for(uint16_t t=0; t<threadCount; t++){
+		threads.push_back( std::thread());
+	}
+	for(std::thread &th : threads){
+		if (th.joinable()) th.join();
+	}
+}
+
+//####################################
+//####################################
+
 int main(int argc, char *argv[]) {
 	DrawingWindow window = DrawingWindow(WIDTH, HEIGHT, false);
 	SDL_Event event;
@@ -870,8 +854,8 @@ int main(int argc, char *argv[]) {
 	
 	setBufferToZero();
 	ObjParserMaterial("cornell-box.mtl");
-	// ObjParserTriangle("cornell-box.obj", 0.35);
-	ObjParserTriangle("sphere.obj", 0.35);
+	ObjParserTriangle("cornell-box.obj", 0.35);
+	// ObjParserTriangle("sphere.obj", 0.35);
 
 
 	uint32_t colour = (255 << 24) + (int(255)<<16) + (int(0)<<8) + int(150);
@@ -888,7 +872,7 @@ int main(int argc, char *argv[]) {
 		}
 		else if(!rayTraced && drawState == 4){
 			
-			drawRayTrace(window,0);
+			RayTracedRefactored(window);
 			// std::cout<< countBehind << std::endl;
 			// countBehind = 0;
 			coolVisual-= 0.05;
