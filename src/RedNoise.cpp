@@ -14,9 +14,10 @@
 #include <cmath>
 #include <RayTriangleIntersection.h>
 #include <thread>
+#include <array>
 
-#define WIDTH 400
-#define HEIGHT 400
+#define WIDTH 640
+#define HEIGHT 480
 
 float halfW = WIDTH/2;
 float halfH = HEIGHT/2;
@@ -183,6 +184,7 @@ std::vector<CanvasPoint> orderedTriangleY(CanvasTriangle &triangle){
 	CanvasPoint highestPoint;
 	CanvasPoint middlePoint;
 	CanvasPoint lowestPoint;
+
 	
 // this whole section could be written more cleverly
 	if(triangle.v0().y <= triangle.v1().y) {
@@ -229,11 +231,6 @@ void fillTrig(CanvasTriangle &triangle, Colour &col, DrawingWindow &window){
 	int height = triangle.v2().y - triangle.v0().y + 1; 
 	int yDirection = (height > 0) ? 1 : -1;
 	height = std::abs(height);
-	std::vector<float> linesDepthStart = interpolateSingleFloats(triangle.v0().depth, triangle.v2().depth, height);
-	// for(float de : linesDepth){
-	// 	std::cout<< de  << "|";
-	// }
-	// std::cout<<std::endl;
 	std::vector<float> startCoords = interpolateSingleFloats(triangle.v0().x, triangle.v2().x,height);
 	std::vector<float> startDepths = interpolateSingleFloats(triangle.v0().depth, triangle.v2().depth, height);
 	std::vector<float> endCoords;
@@ -266,15 +263,18 @@ void fillTrig(CanvasTriangle &triangle, Colour &col, DrawingWindow &window){
 }
 
 //draws a line of the texture
-void textureLine(CanvasPoint &from, CanvasPoint &to, CanvasPoint &fromT, CanvasPoint &toT, TextureMap &texture, DrawingWindow &window){
+void textureLine(CanvasPoint &from, CanvasPoint &to, glm::vec2 &fromT, glm::vec2 &toT, TextureMap &texture, DrawingWindow &window){
 	uint32_t pixelsNeeded = round(std::max(abs(to.x  - from.x),abs(to.y - from.y)));
 	std::vector<float> allXpos = interpolateSingleFloats(from.x,to.x,pixelsNeeded);
 	std::vector<float> allYpos = interpolateSingleFloats(from.y,to.y,pixelsNeeded);
-	std::vector<float> allXposT = interpolateSingleFloats(fromT.x,toT.x,pixelsNeeded);
-	std::vector<float> allYposT = interpolateSingleFloats(fromT.y,toT.y,pixelsNeeded);
-
+	std::vector<float> allXposT = interpolateSingleFloats(fromT[0],toT[0],pixelsNeeded);
+	std::vector<float> allYposT = interpolateSingleFloats(fromT[1],toT[1],pixelsNeeded);
+	std::vector<float> depths = interpolateSingleFloats(from.depth, to.depth, pixelsNeeded);
 	for(float i = 0; i<pixelsNeeded; i++){
-		window.setPixelColour(floor(allXpos[i]),floor(allYpos[i]),texture.pixels[round(allYposT[i])*texture.width+round(allXposT[i])]);
+		if(depths[i]> depthBuffer[int(allXpos[i])][int(allYpos[i])]){
+			window.setPixelColour(floor(allXpos[i]),floor(allYpos[i]),texture.pixels[round(allYposT[i])*texture.width+round(allXposT[i])]);
+			depthBuffer[int(allXpos[i])][int(allYpos[i])] = depths[i];
+		}
 	}
 }
 
@@ -285,22 +285,25 @@ void fillTextureTriangle(CanvasTriangle &triangle, TextureMap &texture, DrawingW
 	int triHeight = triangle.v2().y-triangle.v0().y;
 	int triDirection = (triHeight>0) ? 1 : -1;
 	triHeight = std::abs(triHeight);
-	std::vector<float> startCoords = interpolateSingleFloats(triangle.v0().x, triangle.v2().x,triHeight);
-	std::vector<float> endCoords;
 
+	std::vector<float> startCoords = interpolateSingleFloats(triangle.v0().x, triangle.v2().x,triHeight);
+	std::vector<float> startDepths = interpolateSingleFloats(triangle.v0().depth, triangle.v2().depth, triHeight);
+	std::vector<float> endCoords;
+	std::vector<float> endDepths;
 	std::vector<float> startTCoordsX = interpolateSingleFloats(triangle.v0().texturePoint.x, triangle.v2().texturePoint.x,triHeight);
 	std::vector<float> startTCoordsY = interpolateSingleFloats(triangle.v0().texturePoint.y, triangle.v2().texturePoint.y,triHeight);
 	std::vector<float> endTCoordsX;
 	std::vector<float> endTCoordsY;
-
 	//if the triangle is flat on top
 	if(triangle.v0().y == triangle.v1().y){
 		endCoords = interpolateSingleFloats(triangle.v1().x, triangle.v2().x,triHeight);
+		endDepths = interpolateSingleFloats(triangle.v1().depth, triangle.v2().depth, triHeight);
 		endTCoordsX = interpolateSingleFloats(triangle.v1().texturePoint.x, triangle.v2().texturePoint.x,triHeight);
 		endTCoordsY = interpolateSingleFloats(triangle.v1().texturePoint.y, triangle.v2().texturePoint.y,triHeight);
 	} 
 	else {
 		endCoords = interpolateSingleFloats(triangle.v0().x,triangle.v1().x,triHeight);
+		endDepths = interpolateSingleFloats(triangle.v0().depth, triangle.v1().depth, triHeight);
 		endTCoordsX = interpolateSingleFloats(triangle.v0().texturePoint.x, triangle.v1().texturePoint.x,triHeight);
 		endTCoordsY = interpolateSingleFloats(triangle.v0().texturePoint.y, triangle.v1().texturePoint.y,triHeight);
 	}
@@ -310,44 +313,43 @@ void fillTextureTriangle(CanvasTriangle &triangle, TextureMap &texture, DrawingW
 	std::vector<float> topBot = {triangle.v2().texturePoint.x-triangle.v0().texturePoint.x, triangle.v2().texturePoint.y-triangle.v0().texturePoint.y};
 
 	for(int i=0;i<triHeight;i++){
-		CanvasPoint from(std::round(startCoords[i]), triDirection*i+triangle.v0().y);
-		CanvasPoint to(std::round(endCoords[i]), triDirection*i+triangle.v0().y);
-		CanvasPoint fromT(round(startTCoordsX[i]),round(startTCoordsY[i]));
-		CanvasPoint toT(round(endTCoordsX[i]),round(endTCoordsY[i]));
+		
+		CanvasPoint from(std::round(startCoords[i]), triDirection*i+triangle.v0().y,startDepths[i]);
+		CanvasPoint to(std::round(endCoords[i]), triDirection*i+triangle.v0().y,endDepths[i]);
+		glm::vec2 fromT(round(startTCoordsX[i]*texture.width),round(startTCoordsY[i]*texture.height));
+		glm::vec2 toT(round(endTCoordsX[i]*texture.width),round(endTCoordsY[i]*texture.height));
 		textureLine(from,to,fromT,toT,texture,window);
 	}
 }
 
-void texturedTriangle(CanvasTriangle &triangle, CanvasTriangle &texturedTriangle, TextureMap &texture, DrawingWindow &window){
+void texturedTriangle(CanvasTriangle &triangle, TextureMap &texture, DrawingWindow &window){
 	Colour outlineCol(255,255,255);
-	Colour col(255,255,0);
+	Colour col(255,255,0);	
 	
-	
-	triangle.v0().texturePoint = TexturePoint(texturedTriangle.v0().x, texturedTriangle.v0().y);
-	triangle.v1().texturePoint = TexturePoint(texturedTriangle.v1().x, texturedTriangle.v1().y);
-	triangle.v2().texturePoint = TexturePoint(texturedTriangle.v2().x, texturedTriangle.v2().y);
-
 	
 	std::vector<CanvasPoint> orderedPoints = orderedTriangleY(triangle);
-	
+	//if triangle is not flat
 	if(orderedPoints[0].y != orderedPoints[1].y && orderedPoints[0].y != orderedPoints[2].y && orderedPoints[1].y != orderedPoints[2].y){
 		std::vector<CanvasTriangle> triangles = splitTriangle(orderedPoints);
-		
 		//calculating the texture point of the split point
-		float textureSplitRatio = (triangles[0].v2().y - triangle.v0().y)/(orderedPoints[2].y - orderedPoints[0].y);
-		
+		float textureSplitRatio = (triangles[0].v2().y - triangles[0].v0().y)/(orderedPoints[2].y - orderedPoints[0].y);
 
-		int splitX = round(orderedPoints[0].texturePoint.x + textureSplitRatio*(orderedPoints[2].texturePoint.x -orderedPoints[0].texturePoint.x));
-		int splitY = round(orderedPoints[0].texturePoint.y + textureSplitRatio*(orderedPoints[2].texturePoint.y -orderedPoints[0].texturePoint.y));
+		float splitX = orderedPoints[0].texturePoint.x + textureSplitRatio*(orderedPoints[2].texturePoint.x -orderedPoints[0].texturePoint.x);
+		float splitY = orderedPoints[0].texturePoint.y + textureSplitRatio*(orderedPoints[2].texturePoint.y -orderedPoints[0].texturePoint.y);
+
+		
 		triangles[0].v2().texturePoint = TexturePoint(splitX,splitY);
 		triangles[1].v1().texturePoint = TexturePoint(splitX,splitY);
-		
 
 		for(int i=0; i<2;i++){
 			fillTextureTriangle(triangles[i], texture, window);
 		}
 	}
-	strokedTriangle(triangle, outlineCol, window);
+	else{
+		CanvasTriangle ordered(orderedPoints[0], orderedPoints[1], orderedPoints[2]);
+		fillTextureTriangle(ordered, texture, window);
+	}
+	// strokedTriangle(triangle, outlineCol, window);
 }
 
 void filledTriangle(CanvasTriangle &triangle, Colour &col, DrawingWindow &window){
@@ -380,14 +382,16 @@ std::vector<ModelTriangle> modelTriangles;
 //this is my convoluded way for finding the normals of each vertex
 std::vector<std::array<int,3>> triangleNormalIndexes;
 std::unordered_map<std::string,Colour> materialMap;
+std::unordered_map<std::string,TextureMap> materialTextureMap;
 std::vector<glm::vec3> allVertex;
+std::vector<glm::vec2> allVertexTextures;
 std::vector<glm::vec3> vertexNormals;
 
 
 std::vector<std::string> splitBySpace(std::string line){
     char space_char = ' ';
     std::vector<std::string> words{};
-	std::stringstream	iss(line);
+	std::stringstream iss(line);
 	std::string word;
 	while(getline(iss, word, space_char)){
 		words.push_back(word);
@@ -412,10 +416,15 @@ void ObjParserMaterial(std::string path){
 			Colour col(std::round(255*std::stof(split[1])), std::round(255*std::stof(split[2])),std::round(255*std::stof(split[3])));
 			materialMap.insert({currentName,col});
 		}
+		if (line[0] == 'm'){
+			std::vector<std::string> split = splitBySpace(line);
+			materialTextureMap.insert({currentName,TextureMap(split[1])});
+		}
 	}
 }
 void ObjParserTriangle(std::string path, float scale){
     Colour currentColVal(255,255,255);
+	std::string currentMatName;
     std::string myText;
     std::ifstream MyReadFile(path);
     // std::vector<glm::vec3> allVertex;
@@ -430,34 +439,56 @@ void ObjParserTriangle(std::string path, float scale){
 
 		if(myText[0] == 'u'){
 			std::vector<std::string> split = splitBySpace(myText);
-			currentColVal = materialMap.at(split[1]);
+			currentMatName = split[1];
+			currentColVal = materialMap.at(currentMatName);
 		}
 		
         if(myText[0] == 'v'){
-			
-            std::vector<std::string> listOfCoords = splitBySpace(myText);
-            //need to start at index 1 since 0 is 'v'
-            glm::vec3 vertex(std::stof(listOfCoords[1]), std::stof(listOfCoords[2]),std::stof(listOfCoords[3]));
-            allVertex.push_back(scale * vertex);
-			vertexNormals.push_back(glm::vec3(0,0,0));
+			std::vector<std::string> listOfCoords = splitBySpace(myText);
+			if(myText[1] == 't'){
+				
+				glm::vec2 texture(std::stof(listOfCoords[1]), std::stof(listOfCoords[2]));
+				texture[0] = fmod(texture[0], 1.0f);
+				texture[1] = 1.0f - fmod(texture[1], 1.0f);
+				allVertexTextures.push_back(texture);
+			}
+			else{
+				//need to start at index 1 since 0 is 'v'
+				glm::vec3 vertex(std::stof(listOfCoords[1]), std::stof(listOfCoords[2]),std::stof(listOfCoords[3]));
+				allVertex.push_back(scale * vertex);
+				vertexNormals.push_back(glm::vec3(0,0,0));
+			}  
         }
         if(myText[0] == 'f'){
             std::vector<std::string> listOfVertex = splitBySpace(myText);
+			std::vector<std::string> listOfTextures  = {"","",""};
             for(int i=1; i<4;i++){
-                listOfVertex[i] = listOfVertex[i].substr(0,listOfVertex[i].size()-1);
+				int dil = listOfVertex[i].find('/');
+				listOfTextures[i-1] = listOfVertex[i].substr(dil+1,listOfVertex[i].size()-dil-1);
+                listOfVertex[i] = listOfVertex[i].substr(0,dil);	
             }
-			//this is broken trying to get the indexes to match it real counter part
+			
 			std::array<int, 3> indexes {
 				std::stoi(listOfVertex[1])-1,
 				std::stoi(listOfVertex[2])-1,
 				std::stoi(listOfVertex[3])-1
 				}; 
-			triangleNormalIndexes.push_back(indexes);std::vector<std::string> split = splitBySpace(myText);
+			triangleNormalIndexes.push_back(indexes);
 
             glm::vec3 v0 = allVertex[indexes[0] + addVertexIndex];
             glm::vec3 v1 = allVertex[indexes[1] + addVertexIndex];
             glm::vec3 v2 = allVertex[indexes[2] + addVertexIndex];
             ModelTriangle triangle(v0,v1,v2,currentColVal);
+
+			if(listOfTextures[1].size() > 0){
+				triangle.hasTexture = true;
+				triangle.texturePoints[0] = TexturePoint(allVertexTextures[std::stoi(listOfTextures[0])-1][0],allVertexTextures[std::stoi(listOfTextures[0])-1][1]);
+				triangle.texturePoints[1] = TexturePoint(allVertexTextures[std::stoi(listOfTextures[1])-1][0],allVertexTextures[std::stoi(listOfTextures[1])-1][1]);
+				triangle.texturePoints[2] = TexturePoint(allVertexTextures[std::stoi(listOfTextures[2])-1][0],allVertexTextures[std::stoi(listOfTextures[2])-1][1]);
+				// std::cout << triangle.texturePoints[0] <<"|"<< triangle.texturePoints[1]<<"|"<<triangle.texturePoints[2]<< std::endl;
+				triangle.textureMap = currentMatName;
+			}
+
 			//if this doesnt work then the normal is facing the opposite way
 			triangle.normal = glm::normalize(glm::cross((v1-v0),(v2-v0)));
 
@@ -549,7 +580,6 @@ void wireFrame(glm::vec3 cameraPosition, float focalLength, DrawingWindow &windo
 		CanvasPoint v1 = getCanvasIntersectionPoint(cameraPosition,trig.vertices[1], focalLength);
 		CanvasPoint v2 = getCanvasIntersectionPoint(cameraPosition,trig.vertices[2], focalLength);
 		CanvasTriangle canvTrig(v0,v1,v2);
-		// std::cout << canvTrig << std::endl;
 		strokedTriangle(canvTrig, col, window);
 	}
 }
@@ -562,7 +592,15 @@ void filledFrame(glm::vec3 cameraPosition, float focalLength, DrawingWindow &win
 		CanvasPoint v1 = getCanvasIntersectionPoint(cameraPosition,trig.vertices[1], focalLength);
 		CanvasPoint v2 = getCanvasIntersectionPoint(cameraPosition,trig.vertices[2], focalLength);
 		CanvasTriangle canvTrig(v0,v1,v2);
-		filledTriangle(canvTrig,col,window);
+		if(trig.hasTexture){
+			TextureMap texMap = materialTextureMap.at(trig.textureMap);
+			// TexturePoint(std::round(trig.texturePoints[0].x * texMap.width), std::round(trig.texturePoints[0].y * texMap.height));
+			canvTrig.v0().texturePoint = trig.texturePoints[0];
+			canvTrig.v1().texturePoint = trig.texturePoints[1];
+			canvTrig.v2().texturePoint = trig.texturePoints[2];
+			texturedTriangle(canvTrig,texMap,window);
+		} 
+		else filledTriangle(canvTrig,col,window);
 	}
 }
 
@@ -591,7 +629,14 @@ RayTriangleIntersection  getClosestIntersection(glm::vec3 rayDirection,glm::vec3
 		float v = possibleSolution[2];
 		if(possibleSolution[0]<closest.distanceFromCamera &&  possibleSolution[0] >= 0.001 && (u >= 0.0) && (u <= 1.0) && (v >= 0.0) && (v <= 1.0) && (u + v) <= 1.0f){
 			glm::vec3 pointPos = triangle.vertices[0] + u*e0 + v*e1;
-			closest = RayTriangleIntersection(pointPos, possibleSolution[0], triangle, i, u, v);
+			if(triangle.hasTexture){
+				glm::vec2 p0(triangle.texturePoints[0].x, triangle.texturePoints[0].y);
+				glm::vec2 eT0(triangle.texturePoints[1].x - triangle.texturePoints[0].x, triangle.texturePoints[1].y - triangle.texturePoints[0].y);
+				glm::vec2 eT1(triangle.texturePoints[2].x - triangle.texturePoints[0].x,triangle.texturePoints[2].y - triangle.texturePoints[0].y);
+				glm::vec2 texturePos = (p0 + u*eT0 + v*eT1);
+				closest = RayTriangleIntersection(pointPos, texturePos,  possibleSolution[0], triangle, i, u, v);
+			}
+			else closest = RayTriangleIntersection(pointPos, possibleSolution[0], triangle, i, u, v);
 		} 
 	}
 	return closest;
@@ -633,9 +678,9 @@ glm::vec3 specularColour(glm::vec3 colour, glm::vec3 pointToCamera, glm::vec3 po
 
 uint8_t rayTracedState = 0;
 // this version may still change but I want to go from point to light not the other way 
-void  RayTracedRefactored(DrawingWindow&window){
-	for(uint16_t y=0; y<HEIGHT; y++){
-		for(uint16_t x=0; x<WIDTH; x++){
+void  RayTracedRefactored(DrawingWindow &window,int yStart,int yEnd){
+	for(uint32_t y=yStart; y<yEnd; y++){
+		for(uint32_t x=0; x<WIDTH; x++){
 			glm::vec3 rayDirection = getRayDirection(x,y);
 			RayTriangleIntersection closestIntersection = getClosestIntersection(rayDirection, cameraPosition);
 			glm::vec3 colour(0,0,0);
@@ -643,9 +688,19 @@ void  RayTracedRefactored(DrawingWindow&window){
 			float angleToLight;
 
 			if(closestIntersection.triangleIndex != -1){
-				colour[0] =  closestIntersection.intersectedTriangle.colour.red; 
-				colour[1] =  closestIntersection.intersectedTriangle.colour.green; 
-				colour[2] =  closestIntersection.intersectedTriangle.colour.blue;
+				if(closestIntersection.intersectedTriangle.hasTexture){
+					TextureMap texture = materialTextureMap.at(closestIntersection.intersectedTriangle.textureMap);
+					uint32_t packedColour = texture.pixels[std::floor(closestIntersection.textureIntersection[0]*texture.width) + std::floor(closestIntersection.textureIntersection[1]*texture.height)*texture.width];
+					colour[2] = float(packedColour & 0x000000ff);
+					colour[1] = float((packedColour & 0x0000ff00)>>8);
+					colour[0] = float((packedColour & 0x00ff0000)>>16);
+				}
+				else{
+					colour[0] =  closestIntersection.intersectedTriangle.colour.red; 
+					colour[1] =  closestIntersection.intersectedTriangle.colour.green; 
+					colour[2] =  closestIntersection.intersectedTriangle.colour.blue;
+				}
+				
 
 				glm::vec3 pointToLightRay = lightCoord - closestIntersection.intersectionPoint;
 				float pointToLightDistance = glm::length(pointToLightRay);
@@ -824,7 +879,7 @@ void draw(DrawingWindow &window){
 	// CanvasPoint v5 (65, 330);
 	// CanvasTriangle trigTexture(v3,v4,v5);
 
-	// std::string filePath = "src/texture.ppm";
+	// std::string filePath = "texture.ppm";
 	// TextureMap textureMap(filePath);
 	// texturedTriangle(trig,trigTexture,textureMap,window);
 }
@@ -833,14 +888,26 @@ void draw(DrawingWindow &window){
 //###########THREADING################
 //####################################
 
-void threadedRender(uint16_t threadCount){
+
+//this will only work if threadCount and Width are multiples of eachother
+//(or whatever the term is)
+void threadedRender(uint16_t threadCount, DrawingWindow &window){
 	std::vector<std::thread> threads;
-	for(uint16_t t=0; t<threadCount; t++){
-		threads.push_back( std::thread());
+	int segmentHeight = std::floor(HEIGHT/threadCount);
+	int rest = HEIGHT % threadCount;
+
+	//assigning the threads to rayTrace sections
+	for(uint32_t t=0; t<threadCount; t++){
+		int yStart = t*segmentHeight;
+		int yEnd = yStart + segmentHeight;
+		if(t == threadCount-1) yEnd += rest;
+		threads.push_back(std::thread(RayTracedRefactored,std::ref(window),yStart,yEnd));
+		// std::cout<< yStart << "," << yEnd << std::endl;
 	}
-	for(std::thread &th : threads){
-		if (th.joinable()) th.join();
-	}
+
+	for(std::thread &t : threads){
+        if(t.joinable()) t.join();
+    }
 }
 
 //####################################
@@ -871,8 +938,7 @@ int main(int argc, char *argv[]) {
 			rayTraced = false;
 		}
 		else if(!rayTraced && drawState == 4){
-			
-			RayTracedRefactored(window);
+			threadedRender(8,window);
 			// std::cout<< countBehind << std::endl;
 			// countBehind = 0;
 			coolVisual-= 0.05;

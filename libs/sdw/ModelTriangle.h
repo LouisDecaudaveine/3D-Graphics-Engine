@@ -12,6 +12,8 @@ struct ModelTriangle {
 	std::array<TexturePoint, 3> texturePoints{};
 	Colour colour{};
 	glm::vec3 normal{};
+	bool hasTexture {};
+	std::string textureMap{};
 
 	ModelTriangle();
 	ModelTriangle(
