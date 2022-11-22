@@ -13,6 +13,7 @@ struct ModelTriangle {
 	Colour colour{};
 	glm::vec3 normal{};
 	bool hasTexture {};
+	bool isReflective {};
 	std::string textureMap{};
 
 	ModelTriangle();

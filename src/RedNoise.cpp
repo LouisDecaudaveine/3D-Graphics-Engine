@@ -427,6 +427,8 @@ void ObjParserTriangle(std::string path, float scale){
 	std::string currentMatName;
     std::string myText;
     std::ifstream MyReadFile(path);
+	//this bool is to check if the next triangle is reflective
+	bool isReflective = false;
     // std::vector<glm::vec3> allVertex;
     std::vector<ModelTriangle> allTriangles;
 	int addVertexIndex = 0;
@@ -438,8 +440,10 @@ void ObjParserTriangle(std::string path, float scale){
 		}
 
 		if(myText[0] == 'u'){
+			isReflective = false;
 			std::vector<std::string> split = splitBySpace(myText);
 			currentMatName = split[1];
+			if(currentMatName == "Mirror") isReflective = true;
 			currentColVal = materialMap.at(currentMatName);
 		}
 		
@@ -479,6 +483,7 @@ void ObjParserTriangle(std::string path, float scale){
             glm::vec3 v1 = allVertex[indexes[1] + addVertexIndex];
             glm::vec3 v2 = allVertex[indexes[2] + addVertexIndex];
             ModelTriangle triangle(v0,v1,v2,currentColVal);
+			if(isReflective) triangle.isReflective = true;
 
 			if(listOfTextures[1].size() > 0){
 				triangle.hasTexture = true;
@@ -627,7 +632,7 @@ RayTriangleIntersection  getClosestIntersection(glm::vec3 rayDirection,glm::vec3
 		glm::vec3 possibleSolution = glm::inverse(DEMatrix) * SPVector;
 		float u = possibleSolution[1];
 		float v = possibleSolution[2];
-		if(possibleSolution[0]<closest.distanceFromCamera &&  possibleSolution[0] >= 0.001 && (u >= 0.0) && (u <= 1.0) && (v >= 0.0) && (v <= 1.0) && (u + v) <= 1.0f){
+		if(possibleSolution[0]<closest.distanceFromCamera &&  possibleSolution[0] >= 0.005 && (u >= 0.0) && (u <= 1.0) && (v >= 0.0) && (v <= 1.0) && (u + v) <= 1.0f){
 			glm::vec3 pointPos = triangle.vertices[0] + u*e0 + v*e1;
 			if(triangle.hasTexture){
 				glm::vec2 p0(triangle.texturePoints[0].x, triangle.texturePoints[0].y);
@@ -676,6 +681,7 @@ glm::vec3 specularColour(glm::vec3 colour, glm::vec3 pointToCamera, glm::vec3 po
 	return colour;
 }
 
+
 uint8_t rayTracedState = 0;
 // this version may still change but I want to go from point to light not the other way 
 void  RayTracedRefactored(DrawingWindow &window,int yStart,int yEnd){
@@ -683,44 +689,51 @@ void  RayTracedRefactored(DrawingWindow &window,int yStart,int yEnd){
 		for(uint32_t x=0; x<WIDTH; x++){
 			glm::vec3 rayDirection = getRayDirection(x,y);
 			RayTriangleIntersection closestIntersection = getClosestIntersection(rayDirection, cameraPosition);
+			glm::vec3 reflectionRay;
 			glm::vec3 colour(0,0,0);
+			glm::vec3 normal = closestIntersection.intersectedTriangle.normal;
 			float proximityLight;
 			float angleToLight;
+			//for any reflective surface, we are replacing the point with its point of reflection
+			//with this implementation phong reflections will not happen
+			//to do so more the if rayTraceState stuff above this if statement
+			if(closestIntersection.intersectedTriangle.isReflective){
+				closestIntersection = getClosestIntersection(pointReflection(normal, (rayDirection)), closestIntersection.intersectionPoint);
+			}
 
 			if(closestIntersection.triangleIndex != -1){
-				if(closestIntersection.intersectedTriangle.hasTexture){
-					TextureMap texture = materialTextureMap.at(closestIntersection.intersectedTriangle.textureMap);
-					uint32_t packedColour = texture.pixels[std::floor(closestIntersection.textureIntersection[0]*texture.width) + std::floor(closestIntersection.textureIntersection[1]*texture.height)*texture.width];
-					colour[2] = float(packedColour & 0x000000ff);
-					colour[1] = float((packedColour & 0x0000ff00)>>8);
-					colour[0] = float((packedColour & 0x00ff0000)>>16);
-				}
-				else{
-					colour[0] =  closestIntersection.intersectedTriangle.colour.red; 
-					colour[1] =  closestIntersection.intersectedTriangle.colour.green; 
-					colour[2] =  closestIntersection.intersectedTriangle.colour.blue;
-				}
-				
-
 				glm::vec3 pointToLightRay = lightCoord - closestIntersection.intersectionPoint;
 				float pointToLightDistance = glm::length(pointToLightRay);
 				pointToLightRay = glm::normalize(pointToLightRay);
 
 				RayTriangleIntersection pointToLightIntersection = getClosestIntersection(pointToLightRay,closestIntersection.intersectionPoint);
 				if(pointToLightIntersection.distanceFromCamera >= pointToLightDistance){
-					glm::vec3 normal = closestIntersection.intersectedTriangle.normal;
 					if(rayTracedState == 0){
 						normal = glm::normalize(
 							(closestIntersection.v * closestIntersection.intersectedTriangle.verticesNormals[2]) + 
 							(closestIntersection.u * closestIntersection.intersectedTriangle.verticesNormals[1]) + 
 							(closestIntersection.w * closestIntersection.intersectedTriangle.verticesNormals[0])
 						); 
-
-						proximityLight = 0.5f * proximityLighting(pointToLightDistance);
-						angleToLight = 0.5f * std::pow(angleOfIncidence(normal, pointToLightRay),1);
-						colour = (proximityLight + angleToLight) * colour; 
-						colour = specularColour(colour, (-1.0f * rayDirection), pointReflection(normal, (-1.0f * pointToLightRay)));
 					}
+
+					if(closestIntersection.intersectedTriangle.hasTexture){
+						TextureMap texture = materialTextureMap.at(closestIntersection.intersectedTriangle.textureMap);
+						uint32_t packedColour = texture.pixels[std::floor(closestIntersection.textureIntersection[0]*texture.width) + std::floor(closestIntersection.textureIntersection[1]*texture.height)*texture.width];
+						colour[2] = float(packedColour & 0x000000ff);
+						colour[1] = float((packedColour & 0x0000ff00)>>8);
+						colour[0] = float((packedColour & 0x00ff0000)>>16);
+					}
+					else{
+						colour[0] =  closestIntersection.intersectedTriangle.colour.red; 
+						colour[1] =  closestIntersection.intersectedTriangle.colour.green; 
+						colour[2] =  closestIntersection.intersectedTriangle.colour.blue;
+					}
+					reflectionRay = pointReflection(normal, (-1.0f * pointToLightRay));
+					proximityLight = 0.5f * proximityLighting(pointToLightDistance);
+					angleToLight = 0.5f * std::pow(angleOfIncidence(normal, pointToLightRay),2);
+					colour = (proximityLight + angleToLight) * colour; 
+					colour = specularColour(colour, (-1.0f * rayDirection), reflectionRay);
+					
 				}
 				else colour = 0.05f * colour;
 			}
@@ -916,7 +929,7 @@ void threadedRender(uint16_t threadCount, DrawingWindow &window){
 int main(int argc, char *argv[]) {
 	DrawingWindow window = DrawingWindow(WIDTH, HEIGHT, false);
 	SDL_Event event;
-
+	rayTracedState = 1;
 	
 	
 	setBufferToZero();
