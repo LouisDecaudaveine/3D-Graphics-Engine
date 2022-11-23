@@ -3,6 +3,7 @@
 RayTriangleIntersection::RayTriangleIntersection() = default;
 RayTriangleIntersection::RayTriangleIntersection(const glm::vec3 &point, float distance, const ModelTriangle &triangle, size_t index, float uVal, float vVal) :
 		intersectionPoint(point),
+		normal(),
 		textureIntersection(),
 		distanceFromCamera(distance),
 		intersectedTriangle(triangle),
@@ -12,6 +13,7 @@ RayTriangleIntersection::RayTriangleIntersection(const glm::vec3 &point, float d
 		w(1-uVal-vVal) {};
 RayTriangleIntersection::RayTriangleIntersection(const glm::vec3 &point, const glm::vec2 &texturePoint, float distance, const ModelTriangle &triangle, size_t index, float uVal, float vVal):
 		intersectionPoint(point),
+		normal(),
 		textureIntersection(texturePoint),
 		distanceFromCamera(distance),
 		intersectedTriangle(triangle),

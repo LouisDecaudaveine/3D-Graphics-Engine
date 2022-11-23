@@ -673,7 +673,7 @@ glm::vec3 pointReflection(glm::vec3 surfaceNormal, glm::vec3 LightToPoint){
 }
 
 glm::vec3 specularColour(glm::vec3 colour, glm::vec3 pointToCamera, glm::vec3 pointReflection){
-	float specularExpo = std::pow(glm::dot(pointToCamera, pointReflection),64);
+	float specularExpo = std::pow(glm::dot(pointToCamera, pointReflection),256);
 	for(int i = 0; i < 3; i++){
 		colour[i] += std::floor(254* specularExpo);
 		if(colour[i] > 255) colour[i] = 254;
@@ -694,14 +694,15 @@ void  RayTracedRefactored(DrawingWindow &window,int yStart,int yEnd){
 			glm::vec3 normal = closestIntersection.intersectedTriangle.normal;
 			float proximityLight;
 			float angleToLight;
-			//for any reflective surface, we are replacing the point with its point of reflection
-			//with this implementation phong reflections will not happen
-			//to do so more the if rayTraceState stuff above this if statement
-			if(closestIntersection.intersectedTriangle.isReflective){
-				closestIntersection = getClosestIntersection(pointReflection(normal, (rayDirection)), closestIntersection.intersectionPoint);
-			}
-
+			
 			if(closestIntersection.triangleIndex != -1){
+				//for any reflective surface, we are replacing the point with its point of reflection
+				//with this implementation phong reflections will not happen
+				//to do so more the if rayTraceState stuff above this if statement
+				if(closestIntersection.intersectedTriangle.isReflective){
+					closestIntersection = getClosestIntersection(pointReflection(normal, (rayDirection)), closestIntersection.intersectionPoint);
+				}
+				
 				glm::vec3 pointToLightRay = lightCoord - closestIntersection.intersectionPoint;
 				float pointToLightDistance = glm::length(pointToLightRay);
 				pointToLightRay = glm::normalize(pointToLightRay);
@@ -714,6 +715,7 @@ void  RayTracedRefactored(DrawingWindow &window,int yStart,int yEnd){
 							(closestIntersection.u * closestIntersection.intersectedTriangle.verticesNormals[1]) + 
 							(closestIntersection.w * closestIntersection.intersectedTriangle.verticesNormals[0])
 						); 
+						
 					}
 
 					if(closestIntersection.intersectedTriangle.hasTexture){
@@ -739,6 +741,67 @@ void  RayTracedRefactored(DrawingWindow &window,int yStart,int yEnd){
 			}
 			uint32_t col = (255 << 24) + (int(colour[0])<<16) + (int(colour[1])<<8) + int(colour[2]);
 			window.setPixelColour(x,y,col);
+		}
+	}
+}
+
+glm::vec3 recurssiveRayTrace(RayTriangleIntersection point, glm::vec3 rayDirection, int recDepth){
+	if(rayTracedState == 0){
+		point.normal = glm::normalize(
+			(point.v * point.intersectedTriangle.verticesNormals[2]) + 
+			(point.u * point.intersectedTriangle.verticesNormals[1]) + 
+			(point.w * point.intersectedTriangle.verticesNormals[0])
+		);
+	}
+	else point.normal = point.intersectedTriangle.normal;
+	glm::vec3 colour(point.intersectedTriangle.colour.red, 
+		point.intersectedTriangle.colour.green, 
+		point.intersectedTriangle.colour.blue);
+	glm::vec3 pointToLightRay = lightCoord - point.intersectionPoint;
+	float pointToLightDistance = glm::length(pointToLightRay);
+	pointToLightRay = glm::normalize(pointToLightRay);
+	
+	RayTriangleIntersection pointTolightIntersection = getClosestIntersection(pointToLightRay, point.intersectionPoint);
+	if(pointTolightIntersection.distanceFromCamera >= pointToLightDistance){
+		glm::vec3 reflectionDirection = pointReflection(point.normal, (rayDirection));
+		//for reflective surfaces
+		if(point.intersectedTriangle.isReflective){
+			RayTriangleIntersection newPoint =  getClosestIntersection(reflectionDirection, point.intersectionPoint);
+			return recurssiveRayTrace(newPoint, reflectionDirection, recDepth++);
+		}
+		//for textured surfaces
+		if(point.intersectedTriangle.hasTexture){
+			TextureMap texture = materialTextureMap.at(point.intersectedTriangle.textureMap);
+			uint32_t packedColour = texture.pixels[std::floor(point.textureIntersection[0]*texture.width) + std::floor(point.textureIntersection[1]*texture.height)*texture.width];
+			colour[2] = float(packedColour & 0x000000ff);
+			colour[1] = float((packedColour & 0x0000ff00)>>8);
+			colour[0] = float((packedColour & 0x00ff0000)>>16);
+		}
+
+		float proximityLight = 0.5f * proximityLighting(pointToLightDistance);
+		float angleToLight = 0.5f * std::pow(angleOfIncidence(point.normal, pointToLightRay),4);
+		colour = (proximityLight + angleToLight) * colour; 
+		if(recDepth == 0){
+			glm::vec3 lightReflection = pointReflection(point.normal, (-1.0f* pointToLightRay));
+			colour = specularColour(colour, (-1.0f * rayDirection), lightReflection);
+		}
+	}
+	else colour = 0.05f * colour;
+
+	return colour;
+}
+
+void rayTraceReRefactored(uint32_t (&window)[WIDTH][HEIGHT], int yStart, int yEnd){
+	for(uint32_t y = yStart; y<yEnd; y++){
+		for(uint32_t x=0; x<WIDTH; x++){
+			glm::vec3 rayDirection = getRayDirection(x,y);
+			RayTriangleIntersection closestIntersection = getClosestIntersection(rayDirection,cameraPosition);
+			if(closestIntersection.triangleIndex != -1){
+				glm::vec3 colour = recurssiveRayTrace(closestIntersection, rayDirection,0);
+				// colour = specularColour(colour, (-1.0f * rayDirection), pointReflection(closestIntersection.normal, (rayDirection)));
+				window[x][y] = (255 << 24) + (int(colour[0])<<16) + (int(colour[1])<<8) + int(colour[2]);
+			}
+			else window[x][y] = 0;
 		}
 	}
 }
@@ -908,19 +971,26 @@ void threadedRender(uint16_t threadCount, DrawingWindow &window){
 	std::vector<std::thread> threads;
 	int segmentHeight = std::floor(HEIGHT/threadCount);
 	int rest = HEIGHT % threadCount;
+	uint32_t world[WIDTH][HEIGHT];
 
 	//assigning the threads to rayTrace sections
 	for(uint32_t t=0; t<threadCount; t++){
 		int yStart = t*segmentHeight;
 		int yEnd = yStart + segmentHeight;
 		if(t == threadCount-1) yEnd += rest;
-		threads.push_back(std::thread(RayTracedRefactored,std::ref(window),yStart,yEnd));
-		// std::cout<< yStart << "," << yEnd << std::endl;
+		
+		threads.push_back(std::thread(rayTraceReRefactored,std::ref(world),yStart,yEnd));
+		// threads.push_back(std::thread(RayTracedRefactored,std::ref(window),yStart,yEnd));
 	}
 
 	for(std::thread &t : threads){
         if(t.joinable()) t.join();
     }
+	for(size_t x=0; x<WIDTH; x++){
+		for(size_t y=0; y<HEIGHT; y++){
+			window.setPixelColour(x,y,world[x][y]);
+		}
+	}
 }
 
 //####################################
@@ -929,7 +999,7 @@ void threadedRender(uint16_t threadCount, DrawingWindow &window){
 int main(int argc, char *argv[]) {
 	DrawingWindow window = DrawingWindow(WIDTH, HEIGHT, false);
 	SDL_Event event;
-	rayTracedState = 1;
+	rayTracedState = 0;
 	
 	
 	setBufferToZero();
