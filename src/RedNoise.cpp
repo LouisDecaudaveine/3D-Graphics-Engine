@@ -82,7 +82,6 @@ void blackAndWhiteGradient(DrawingWindow &window) {
 			float green = col;
 			float blue = col;
 			uint32_t colour = (255 << 24) + (int(red) << 16) + (int(green) << 8) + int(blue);
-			// std::cout << x << " " << y << " " << col << std::endl;
 			window.setPixelColour(x, y, colour);
 		}
 	}
@@ -425,6 +424,7 @@ void ObjParserMaterial(std::string path){
 void ObjParserTriangle(std::string path, float scale){
     Colour currentColVal(255,255,255);
 	std::string currentMatName;
+	std::string currentBumpMat;
     std::string myText;
     std::ifstream MyReadFile(path);
 	//this bool is to check if the next triangle is reflective
@@ -438,13 +438,22 @@ void ObjParserTriangle(std::string path, float scale){
 			std::vector<std::string> split = splitBySpace(myText);
 			addVertexIndex = std::stoi(split[1]);
 		}
-
+		// ### for usemtl the 2nd element can be of 3 types
+		// ### the first is just a colour
+		// ### second is a texture
+		// ### the third is the "bumps" tag which changes how usemtl works:
+		// ### usemtl bumps <bump texture> <colour or texture>
 		if(myText[0] == 'u'){
 			isReflective = false;
+			currentBumpMat = "";
 			std::vector<std::string> split = splitBySpace(myText);
-			currentMatName = split[1];
+			if(split[1] == "bumps") {
+				currentBumpMat = split[2];
+				currentMatName = split[3];
+			}
+			else currentMatName = split[1];
 			if(currentMatName == "Mirror") isReflective = true;
-			currentColVal = materialMap.at(currentMatName);
+			else currentColVal = materialMap.at(currentMatName);
 		}
 		
         if(myText[0] == 'v'){
@@ -479,27 +488,33 @@ void ObjParserTriangle(std::string path, float scale){
 				}; 
 			triangleNormalIndexes.push_back(indexes);
 
-            glm::vec3 v0 = allVertex[indexes[0] + addVertexIndex];
-            glm::vec3 v1 = allVertex[indexes[1] + addVertexIndex];
-            glm::vec3 v2 = allVertex[indexes[2] + addVertexIndex];
+            glm::vec3 v0 = allVertex[indexes[0]];
+            glm::vec3 v1 = allVertex[indexes[1]];
+            glm::vec3 v2 = allVertex[indexes[2]];
             ModelTriangle triangle(v0,v1,v2,currentColVal);
 			if(isReflective) triangle.isReflective = true;
 
-			if(listOfTextures[1].size() > 0){
+			//checking if the material is a texture
+			if(materialTextureMap.find(currentMatName) != materialTextureMap.end()){
 				triangle.hasTexture = true;
+				triangle.textureMap = currentMatName;
+			}
+			//checking if its a bump map
+			if(currentBumpMat != "") triangle.bumpsMap = currentBumpMat;
+			
+			//if either then it needs to have texture points
+			if(triangle.hasTexture || currentBumpMat != ""){
 				triangle.texturePoints[0] = TexturePoint(allVertexTextures[std::stoi(listOfTextures[0])-1][0],allVertexTextures[std::stoi(listOfTextures[0])-1][1]);
 				triangle.texturePoints[1] = TexturePoint(allVertexTextures[std::stoi(listOfTextures[1])-1][0],allVertexTextures[std::stoi(listOfTextures[1])-1][1]);
 				triangle.texturePoints[2] = TexturePoint(allVertexTextures[std::stoi(listOfTextures[2])-1][0],allVertexTextures[std::stoi(listOfTextures[2])-1][1]);
-				// std::cout << triangle.texturePoints[0] <<"|"<< triangle.texturePoints[1]<<"|"<<triangle.texturePoints[2]<< std::endl;
-				triangle.textureMap = currentMatName;
 			}
 
 			//if this doesnt work then the normal is facing the opposite way
 			triangle.normal = glm::normalize(glm::cross((v1-v0),(v2-v0)));
 
-			vertexNormals[indexes[0] + addVertexIndex] += triangle.normal;
-			vertexNormals[indexes[1] + addVertexIndex] += triangle.normal;
-			vertexNormals[indexes[2] + addVertexIndex] += triangle.normal;
+			vertexNormals[indexes[0]] += triangle.normal;
+			vertexNormals[indexes[1]] += triangle.normal;
+			vertexNormals[indexes[2]] += triangle.normal;
 			
             modelTriangles.push_back(triangle);
         }
@@ -634,7 +649,7 @@ RayTriangleIntersection  getClosestIntersection(glm::vec3 rayDirection,glm::vec3
 		float v = possibleSolution[2];
 		if(possibleSolution[0]<closest.distanceFromCamera &&  possibleSolution[0] >= 0.005 && (u >= 0.0) && (u <= 1.0) && (v >= 0.0) && (v <= 1.0) && (u + v) <= 1.0f){
 			glm::vec3 pointPos = triangle.vertices[0] + u*e0 + v*e1;
-			if(triangle.hasTexture){
+			if(triangle.hasTexture || triangle.bumpsMap != ""){
 				glm::vec2 p0(triangle.texturePoints[0].x, triangle.texturePoints[0].y);
 				glm::vec2 eT0(triangle.texturePoints[1].x - triangle.texturePoints[0].x, triangle.texturePoints[1].y - triangle.texturePoints[0].y);
 				glm::vec2 eT1(triangle.texturePoints[2].x - triangle.texturePoints[0].x,triangle.texturePoints[2].y - triangle.texturePoints[0].y);
@@ -680,78 +695,28 @@ glm::vec3 specularColour(glm::vec3 colour, glm::vec3 pointToCamera, glm::vec3 po
 	}
 	return colour;
 }
-
+//raytrace states:
+//0: phong shading
+//1: bump mapping
 
 uint8_t rayTracedState = 0;
-// this version may still change but I want to go from point to light not the other way 
-void  RayTracedRefactored(DrawingWindow &window,int yStart,int yEnd){
-	for(uint32_t y=yStart; y<yEnd; y++){
-		for(uint32_t x=0; x<WIDTH; x++){
-			glm::vec3 rayDirection = getRayDirection(x,y);
-			RayTriangleIntersection closestIntersection = getClosestIntersection(rayDirection, cameraPosition);
-			glm::vec3 reflectionRay;
-			glm::vec3 colour(0,0,0);
-			glm::vec3 normal = closestIntersection.intersectedTriangle.normal;
-			float proximityLight;
-			float angleToLight;
-			
-			if(closestIntersection.triangleIndex != -1){
-				//for any reflective surface, we are replacing the point with its point of reflection
-				//with this implementation phong reflections will not happen
-				//to do so more the if rayTraceState stuff above this if statement
-				if(closestIntersection.intersectedTriangle.isReflective){
-					closestIntersection = getClosestIntersection(pointReflection(normal, (rayDirection)), closestIntersection.intersectionPoint);
-				}
-				
-				glm::vec3 pointToLightRay = lightCoord - closestIntersection.intersectionPoint;
-				float pointToLightDistance = glm::length(pointToLightRay);
-				pointToLightRay = glm::normalize(pointToLightRay);
-
-				RayTriangleIntersection pointToLightIntersection = getClosestIntersection(pointToLightRay,closestIntersection.intersectionPoint);
-				if(pointToLightIntersection.distanceFromCamera >= pointToLightDistance){
-					if(rayTracedState == 0){
-						normal = glm::normalize(
-							(closestIntersection.v * closestIntersection.intersectedTriangle.verticesNormals[2]) + 
-							(closestIntersection.u * closestIntersection.intersectedTriangle.verticesNormals[1]) + 
-							(closestIntersection.w * closestIntersection.intersectedTriangle.verticesNormals[0])
-						); 
-						
-					}
-
-					if(closestIntersection.intersectedTriangle.hasTexture){
-						TextureMap texture = materialTextureMap.at(closestIntersection.intersectedTriangle.textureMap);
-						uint32_t packedColour = texture.pixels[std::floor(closestIntersection.textureIntersection[0]*texture.width) + std::floor(closestIntersection.textureIntersection[1]*texture.height)*texture.width];
-						colour[2] = float(packedColour & 0x000000ff);
-						colour[1] = float((packedColour & 0x0000ff00)>>8);
-						colour[0] = float((packedColour & 0x00ff0000)>>16);
-					}
-					else{
-						colour[0] =  closestIntersection.intersectedTriangle.colour.red; 
-						colour[1] =  closestIntersection.intersectedTriangle.colour.green; 
-						colour[2] =  closestIntersection.intersectedTriangle.colour.blue;
-					}
-					reflectionRay = pointReflection(normal, (-1.0f * pointToLightRay));
-					proximityLight = 0.5f * proximityLighting(pointToLightDistance);
-					angleToLight = 0.5f * std::pow(angleOfIncidence(normal, pointToLightRay),2);
-					colour = (proximityLight + angleToLight) * colour; 
-					colour = specularColour(colour, (-1.0f * rayDirection), reflectionRay);
-					
-				}
-				else colour = 0.05f * colour;
-			}
-			uint32_t col = (255 << 24) + (int(colour[0])<<16) + (int(colour[1])<<8) + int(colour[2]);
-			window.setPixelColour(x,y,col);
-		}
-	}
-}
-
 glm::vec3 recurssiveRayTrace(RayTriangleIntersection point, glm::vec3 rayDirection, int recDepth){
-	if(rayTracedState == 0){
+	if(rayTracedState == 0 || rayTracedState == 1){
 		point.normal = glm::normalize(
 			(point.v * point.intersectedTriangle.verticesNormals[2]) + 
 			(point.u * point.intersectedTriangle.verticesNormals[1]) + 
 			(point.w * point.intersectedTriangle.verticesNormals[0])
 		);
+		if(rayTracedState == 1 && point.intersectedTriangle.bumpsMap != ""){
+			TextureMap bumps = materialTextureMap.at(point.intersectedTriangle.bumpsMap);
+			uint32_t packedNormal = bumps.pixels[std::floor(point.textureIntersection[0]*bumps.width) + std::floor(point.textureIntersection[1]*bumps.height)*bumps.width];
+			glm::vec3 bumpNormal;
+			bumpNormal[2] = float(packedNormal & 0x000000ff)/255;
+			bumpNormal[1] = float((packedNormal & 0x0000ff00)>>8)/255;
+			bumpNormal[0] = float((packedNormal & 0x00ff0000)>>16)/255;
+
+			point.normal = glm::normalize(point.normal + bumpNormal);
+		}
 	}
 	else point.normal = point.intersectedTriangle.normal;
 	glm::vec3 colour(point.intersectedTriangle.colour.red, 
@@ -999,7 +964,7 @@ void threadedRender(uint16_t threadCount, DrawingWindow &window){
 int main(int argc, char *argv[]) {
 	DrawingWindow window = DrawingWindow(WIDTH, HEIGHT, false);
 	SDL_Event event;
-	rayTracedState = 0;
+	rayTracedState = 1;
 	
 	
 	setBufferToZero();

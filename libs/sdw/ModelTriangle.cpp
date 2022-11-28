@@ -5,7 +5,7 @@ glm::vec3 defaultNormal(0.0f,0.0f,0.0f);
 ModelTriangle::ModelTriangle() = default;
 
 ModelTriangle::ModelTriangle(const glm::vec3 &v0, const glm::vec3 &v1, const glm::vec3 &v2, Colour trigColour) :
-		vertices({{v0, v1, v2}}), verticesNormals(), texturePoints(), colour(std::move(trigColour)), normal(), hasTexture(), isReflective(), textureMap() {}
+		vertices({{v0, v1, v2}}), verticesNormals(), texturePoints(), colour(std::move(trigColour)), normal(), hasTexture(), isReflective(), textureMap(), bumpsMap() {}
 
 std::ostream &operator<<(std::ostream &os, const ModelTriangle &triangle) {
 	os << "(" << triangle.vertices[0].x << ", " << triangle.vertices[0].y << ", " << triangle.vertices[0].z << ")\n";

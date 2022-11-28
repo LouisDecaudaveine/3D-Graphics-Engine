@@ -1,4 +1,10 @@
 mtllib textured-cornell-box.mtl
+### for usemtl the 2nd element can be of 3 types
+### the first is just a colour
+### second is a texture
+### the third is the "bumps" tag which changes how usemtl works:
+### usemtl bumps <bump texture> <colour or texture>
+
 
 o light
 usemtl White
@@ -10,13 +16,17 @@ f 2/ 4/ 1/
 f 2/ 3/ 4/
 
 o back_wall
-usemtl Grey
+usemtl Grey 
 v -2.7150111 -2.742686 -2.785598
 v 2.780989 -2.742686 -2.785598
 v 2.780989 2.7453132 -2.7899668
 v -2.779011 2.7453132 -2.7899668
-f 5/ 7/ 8/
-f 5/ 6/ 7/
+vt 0.1 0.1
+vt 0.1 0.9
+vt 0.9 0.9
+vt 0.9 0.1
+f 5/3 7/1 8/2
+f 5/3 6/4 7/1
 
 o ceiling
 usemtl Cyan
@@ -33,10 +43,6 @@ v -2.7470112 -2.7382329 2.806401
 v 2.780989 -2.7382329 2.806401
 v 2.780989 -2.742686 -2.785598
 v -2.7150111 -2.742686 -2.785598
-vt 0.1 0.1
-vt 0.1 0.9
-vt 0.9 0.9
-vt 0.9 0.1
 f 14/3 16/1 13/2
 f 14/3 15/4 16/1
 
@@ -122,6 +128,11 @@ f 49/ 50/ 51/
 f 54/ 55/ 56/
 f 58/ 59/ 60/
 
-usemtl Mirror
-f 62/ 64/ 61/
-f 62/ 63/ 64/
+
+vt 0.1 0.1
+vt 0.1 0.5
+vt 0.9 0.5
+vt 0.9 0.1
+usemtl bumps BumpyCobble Mirror
+f 62/7 64/5 61/6
+f 62/7 63/8 64/5

@@ -15,6 +15,7 @@ struct ModelTriangle {
 	bool hasTexture {};
 	bool isReflective {};
 	std::string textureMap{};
+	std::string bumpsMap {};
 
 	ModelTriangle();
 	ModelTriangle(

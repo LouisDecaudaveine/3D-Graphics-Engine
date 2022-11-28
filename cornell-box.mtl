@@ -28,3 +28,7 @@ Kd 0.500000 0.500000 0.500000
 newmtl Cobbles
 Kd 1.000000 1.000000 1.000000
 map_Kd texture.ppm
+
+newmtl BumpyCobble
+Kd 1.000000 1.000000 1.000000
+map_Kd NormalMap.ppm
