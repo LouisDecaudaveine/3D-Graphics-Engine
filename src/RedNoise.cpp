@@ -36,11 +36,15 @@ float xAngle = 0;
 float yAngle = 0;
 
 //this might come back to bite if the object gets moved
-glm::vec3 lightCoord(0.6,0.3,2.0);
+glm::vec3 lightCoord(0.0,0.3,1.0);
+std::vector<glm::vec3> lightPointCloud;
+std::vector<glm::vec3> usedLight = {lightCoord};
+
 // glm::vec3 lightCoord(-2.5,0.7,0.4);
 float orbitState = 1.55;
 uint32_t drawState = 0;
 
+bool isSoftShading = false;
 
 
 
@@ -152,9 +156,6 @@ void depthLine(CanvasPoint &from, CanvasPoint &to, Colour &col, DrawingWindow &w
 				window.setPixelColour(x,y,colour);
 				depthBuffer[int(x)][int(y)] = depths[i];
 			}
-			if(depths[i] == depthBuffer[int(x)][int(y)] && rand() % 10 > 5){
-				window.setPixelColour(x,y,colour);
-			}
 		}
 	}
 	
@@ -235,12 +236,13 @@ void fillTrig(CanvasTriangle &triangle, Colour &col, DrawingWindow &window){
 	std::vector<float> endCoords;
 	std::vector<float> endDepths;
 	//if the triangle is flat on top
+	int a = (triangle.v0().x <  triangle.v1().x) ? 1 : -1;
 	if(triangle.v0().y == triangle.v1().y){
-		endCoords = interpolateSingleFloats(triangle.v1().x, triangle.v2().x,height);
+		endCoords = interpolateSingleFloats(triangle.v1().x + a, triangle.v2().x,height);
 		endDepths = interpolateSingleFloats(triangle.v1().depth, triangle.v2().depth, height);
 	} 
 	else {
-		endCoords = interpolateSingleFloats(triangle.v0().x,triangle.v1().x,height);
+		endCoords = interpolateSingleFloats(triangle.v0().x,triangle.v1().x + a, height);
 		endDepths = interpolateSingleFloats(triangle.v0().depth, triangle.v1().depth, height);
 	}
 	int xFrom;
@@ -421,6 +423,21 @@ void ObjParserMaterial(std::string path){
 		}
 	}
 }
+
+
+// makes a point cloud of the object and uses it as soft lighting
+void lightObjParser (std::string path, float scale){
+	std::ifstream MyReadFile(path);
+	std::string myText;
+	while(getline(MyReadFile,myText)){
+		if(myText[0] == 'v'){
+			std::vector<std::string> listOfCoords = splitBySpace(myText);
+			glm::vec3 vertex(std::stof(listOfCoords[1]), std::stof(listOfCoords[2]),std::stof(listOfCoords[3]));
+			lightPointCloud.push_back(scale * vertex);
+		}
+	}
+}
+
 void ObjParserTriangle(std::string path, float scale){
     Colour currentColVal(255,255,255);
 	std::string currentMatName;
@@ -628,6 +645,17 @@ void filledFrame(glm::vec3 cameraPosition, float focalLength, DrawingWindow &win
 //#############################################
 //#############################################
 
+//##################LIGHTS#####################
+//#############################################
+
+void updateLightCloud(std::vector<glm::vec3> &light){
+	std::vector<glm::vec3> updatedLightCloud;
+	if(isSoftShading){
+		for(int i =0; i< light.size(); i++) light[i] = lightPointCloud[i] + lightCoord;
+	}
+	else light[0] = lightCoord;
+}
+
 //###############RAY-TRACING###################
 //#############################################
 
@@ -686,7 +714,21 @@ glm::vec3 pointReflection(glm::vec3 surfaceNormal, glm::vec3 LightToPoint){
 	glm::vec3 reflection = LightToPoint - 2.0f * surfaceNormal * glm::dot(LightToPoint, surfaceNormal);
 	return reflection;
 }
+float gouraudSpecular(glm::vec3 pointToCamera, glm::vec3 pointReflection){
+	float specularExpo = std::pow(glm::dot(pointToCamera, pointReflection),256);
+	return specularExpo;
+}
 
+std::array<float,2> gouraudShading(RayTriangleIntersection point){
+	std::array<float,2> lightingVals;
+	for(int i=0; i< 2; i++){
+		lightingVals[i] = (point.v * point.intersectedTriangle.verticesLighting[2][i]) + 
+			(point.u * point.intersectedTriangle.verticesLighting[1][i]) + 
+			(point.w * point.intersectedTriangle.verticesLighting[0][i]);
+	}
+	
+	return lightingVals;
+}
 glm::vec3 specularColour(glm::vec3 colour, glm::vec3 pointToCamera, glm::vec3 pointReflection){
 	float specularExpo = std::pow(glm::dot(pointToCamera, pointReflection),256);
 	for(int i = 0; i < 3; i++){
@@ -696,11 +738,12 @@ glm::vec3 specularColour(glm::vec3 colour, glm::vec3 pointToCamera, glm::vec3 po
 	return colour;
 }
 //raytrace states:
+//3: gouraud shading
 //0: phong shading
 //1: bump mapping
 
 uint8_t rayTracedState = 0;
-glm::vec3 recurssiveRayTrace(RayTriangleIntersection point, glm::vec3 rayDirection, int recDepth){
+glm::vec3 recurssiveRayTrace(RayTriangleIntersection point, glm::vec3 rayDirection, int recDepth, float exposureRate){
 	if(rayTracedState == 0 || rayTracedState == 1){
 		point.normal = glm::normalize(
 			(point.v * point.intersectedTriangle.verticesNormals[2]) + 
@@ -722,37 +765,69 @@ glm::vec3 recurssiveRayTrace(RayTriangleIntersection point, glm::vec3 rayDirecti
 	glm::vec3 colour(point.intersectedTriangle.colour.red, 
 		point.intersectedTriangle.colour.green, 
 		point.intersectedTriangle.colour.blue);
+	//for textured surfaces
+	if(point.intersectedTriangle.hasTexture){
+		TextureMap texture = materialTextureMap.at(point.intersectedTriangle.textureMap);
+		uint32_t packedColour = texture.pixels[std::floor(point.textureIntersection[0]*texture.width) + std::floor(point.textureIntersection[1]*texture.height)*texture.width];
+		colour[2] = float(packedColour & 0x000000ff);
+		colour[1] = float((packedColour & 0x0000ff00)>>8);
+		colour[0] = float((packedColour & 0x00ff0000)>>16);
+	}
+	float threshHoldValue = (colour[0] + colour[1] + colour[2]) *0.05f;
+	glm::vec3 threshHoldColour = colour * 0.05f;
+
+	// soft shadows
+	float averageExposure = 0;
+	for(glm::vec3 light : usedLight){
+		glm::vec3 pointToLightRay = light - point.intersectionPoint; 
+		float pointToLightDistance = glm::length(pointToLightRay);
+		pointToLightRay = glm::normalize(pointToLightRay);
+		RayTriangleIntersection pointTolightIntersection = getClosestIntersection(pointToLightRay, point.intersectionPoint);
+		if(pointTolightIntersection.distanceFromCamera >= pointToLightDistance) averageExposure += 1.0f;
+		else averageExposure += 0.05f;
+	}
+	averageExposure = averageExposure/usedLight.size();
+
 	glm::vec3 pointToLightRay = lightCoord - point.intersectionPoint;
 	float pointToLightDistance = glm::length(pointToLightRay);
 	pointToLightRay = glm::normalize(pointToLightRay);
-	
 	RayTriangleIntersection pointTolightIntersection = getClosestIntersection(pointToLightRay, point.intersectionPoint);
-	if(pointTolightIntersection.distanceFromCamera >= pointToLightDistance){
+	if( averageExposure > 0.05f){
 		glm::vec3 reflectionDirection = pointReflection(point.normal, (rayDirection));
 		//for reflective surfaces
 		if(point.intersectedTriangle.isReflective){
 			RayTriangleIntersection newPoint =  getClosestIntersection(reflectionDirection, point.intersectionPoint);
-			return recurssiveRayTrace(newPoint, reflectionDirection, recDepth++);
+			return recurssiveRayTrace(newPoint, reflectionDirection, recDepth++, (averageExposure + exposureRate)/2);
 		}
-		//for textured surfaces
-		if(point.intersectedTriangle.hasTexture){
-			TextureMap texture = materialTextureMap.at(point.intersectedTriangle.textureMap);
-			uint32_t packedColour = texture.pixels[std::floor(point.textureIntersection[0]*texture.width) + std::floor(point.textureIntersection[1]*texture.height)*texture.width];
-			colour[2] = float(packedColour & 0x000000ff);
-			colour[1] = float((packedColour & 0x0000ff00)>>8);
-			colour[0] = float((packedColour & 0x00ff0000)>>16);
+		
+		if(rayTracedState == 3){
+			std::array<float,2> gouraudVals = gouraudShading(point);
+			// std::cout << gouraudVals[0];
+			colour = colour * gouraudVals[0];
+			// std::cout<< colour[0] << "," << colour[1] << "," << colour[2] << std::endl;
+			if(recDepth == 0){
+				for(int i = 0; i < 3; i++){
+					colour[i] += std::floor(254* gouraudVals[1]);
+					if(colour[i] > 255) colour[i] = 254;
+				}
+			}
 		}
+		else{
+			float proximityLight = 0.5f * proximityLighting(pointToLightDistance);
+			float angleToLight = 0.5f * std::pow(angleOfIncidence(point.normal, pointToLightRay),4);
+			colour = (proximityLight + angleToLight) * colour; 
+			if(recDepth == 0){
+				glm::vec3 lightReflection = pointReflection(point.normal, (-1.0f* pointToLightRay));
+				colour = specularColour(colour, (-1.0f * rayDirection), lightReflection);
+			}
+		}
+		colour  = colour * averageExposure;
+		if(colour[0] + colour[1] + colour[2] < threshHoldValue) colour = threshHoldColour;
 
-		float proximityLight = 0.5f * proximityLighting(pointToLightDistance);
-		float angleToLight = 0.5f * std::pow(angleOfIncidence(point.normal, pointToLightRay),4);
-		colour = (proximityLight + angleToLight) * colour; 
-		if(recDepth == 0){
-			glm::vec3 lightReflection = pointReflection(point.normal, (-1.0f* pointToLightRay));
-			colour = specularColour(colour, (-1.0f * rayDirection), lightReflection);
-		}
 	}
-	else colour = 0.05f * colour;
-
+	else {
+		colour = threshHoldColour;
+	}
 	return colour;
 }
 
@@ -762,7 +837,7 @@ void rayTraceReRefactored(uint32_t (&window)[WIDTH][HEIGHT], int yStart, int yEn
 			glm::vec3 rayDirection = getRayDirection(x,y);
 			RayTriangleIntersection closestIntersection = getClosestIntersection(rayDirection,cameraPosition);
 			if(closestIntersection.triangleIndex != -1){
-				glm::vec3 colour = recurssiveRayTrace(closestIntersection, rayDirection,0);
+				glm::vec3 colour = recurssiveRayTrace(closestIntersection, rayDirection,0, 1.0f);
 				// colour = specularColour(colour, (-1.0f * rayDirection), pointReflection(closestIntersection.normal, (rayDirection)));
 				window[x][y] = (255 << 24) + (int(colour[0])<<16) + (int(colour[1])<<8) + int(colour[2]);
 			}
@@ -824,18 +899,22 @@ void handleEvent(SDL_Event event, DrawingWindow &window) {
 	if (event.type == SDL_KEYDOWN) {
 		if (event.key.keysym.sym == SDLK_LEFT) {
 			lightCoord[0] -= 0.1;
+			updateLightCloud(usedLight);
 			rayTraced =false;
 		}
 		else if (event.key.keysym.sym == SDLK_RIGHT) {
 			lightCoord[0] += 0.1;
+			updateLightCloud(usedLight);
 			rayTraced =false;
 		}
 		else if (event.key.keysym.sym == SDLK_UP) {
 			lightCoord[2] += 0.1;
+			updateLightCloud(usedLight);
 			rayTraced =false;
 		}
 		else if (event.key.keysym.sym == SDLK_DOWN) {
 			lightCoord[2] -=0.1;
+			updateLightCloud(usedLight);
 			rayTraced =false;
 		}
 		// else if (event.key.keysym.sym == SDLK_LEFT) cameraPosition[0] -= 0.01;
@@ -883,7 +962,6 @@ void handleEvent(SDL_Event event, DrawingWindow &window) {
 			CanvasPoint v2(176.981, 572.306);
 			CanvasTriangle trig(v0,v1,v2);
 			filledTriangle(trig,col,window);
-
 			CanvasPoint v3(rand()%WIDTH, rand()%HEIGHT);
 			CanvasPoint v4(rand()%WIDTH, rand()%HEIGHT);
 			CanvasPoint v5(rand()%WIDTH, rand()%HEIGHT);
@@ -928,11 +1006,34 @@ void draw(DrawingWindow &window){
 
 //###########THREADING################
 //####################################
+void vertexColourUpdate(){
+	std::vector<ModelTriangle> updatedModels;
+	for(ModelTriangle trig : modelTriangles){
+		ModelTriangle triangle = trig;
+		for(int i = 0; i< 3; i++){
+			glm::vec3 vertexToCamera = glm::normalize(cameraPosition- triangle.vertices[i]);
+			glm::vec3 vertexToLight = lightCoord-triangle.vertices[i];
+			float proximityLight = 0.5f * proximityLighting(glm::length(vertexToLight));
+			float angleToLight = 0.5f * std::pow(angleOfIncidence(triangle.verticesNormals[i], glm::normalize(vertexToLight)),4);
+			float specularValue = gouraudSpecular(vertexToCamera, pointReflection(triangle.verticesNormals[i], glm::normalize(-1.0f * vertexToLight)));
+			triangle.verticesLighting[i][0] = proximityLight + angleToLight;
+			triangle.verticesLighting[i][1] = specularValue;
+		}
+		updatedModels.push_back(triangle);
 
+	}
+	modelTriangles = updatedModels;
+		
+}
 
 //this will only work if threadCount and Width are multiples of eachother
 //(or whatever the term is)
 void threadedRender(uint16_t threadCount, DrawingWindow &window){
+	// gouraud shading
+	if(rayTracedState == 3 ){
+		// update all the vertex colours
+		vertexColourUpdate();
+	}
 	std::vector<std::thread> threads;
 	int segmentHeight = std::floor(HEIGHT/threadCount);
 	int rest = HEIGHT % threadCount;
@@ -945,7 +1046,6 @@ void threadedRender(uint16_t threadCount, DrawingWindow &window){
 		if(t == threadCount-1) yEnd += rest;
 		
 		threads.push_back(std::thread(rayTraceReRefactored,std::ref(world),yStart,yEnd));
-		// threads.push_back(std::thread(RayTracedRefactored,std::ref(window),yStart,yEnd));
 	}
 
 	for(std::thread &t : threads){
@@ -964,14 +1064,22 @@ void threadedRender(uint16_t threadCount, DrawingWindow &window){
 int main(int argc, char *argv[]) {
 	DrawingWindow window = DrawingWindow(WIDTH, HEIGHT, false);
 	SDL_Event event;
-	rayTracedState = 1;
-	
+	rayTracedState = 5;
+
 	
 	setBufferToZero();
 	ObjParserMaterial("cornell-box.mtl");
 	ObjParserTriangle("cornell-box.obj", 0.35);
-	// ObjParserTriangle("sphere.obj", 0.35);
+	lightObjParser("sphere.obj", 0.06);
 
+	glm::vec3 averagePos(0,0,0); 
+	for(glm::vec3 vertex : allVertex){
+		averagePos  = averagePos + vertex;
+	}
+	
+	isSoftShading = true;
+	if(isSoftShading) usedLight = lightPointCloud;
+	updateLightCloud(usedLight);
 
 	uint32_t colour = (255 << 24) + (int(255)<<16) + (int(0)<<8) + int(150);
 	// wireFrame(cameraPosition,focalDistance,window);
@@ -990,12 +1098,14 @@ int main(int argc, char *argv[]) {
 			// std::cout<< countBehind << std::endl;
 			// countBehind = 0;
 			coolVisual-= 0.05;
-			CanvasPoint lightCenter = getCanvasIntersectionPoint(cameraPosition,lightCoord, focalDistance);
-			window.setPixelColour(lightCenter.x,lightCenter.y,colour);
-			window.setPixelColour(lightCenter.x + 1,lightCenter.y,colour);
-			window.setPixelColour(lightCenter.x - 1,lightCenter.y,colour);
-			window.setPixelColour(lightCenter.x,lightCenter.y+1,colour);
-			window.setPixelColour(lightCenter.x - 1,lightCenter.y-1,colour);
+			for(glm::vec3 light : usedLight){
+				CanvasPoint lightCenter = getCanvasIntersectionPoint(cameraPosition,light, focalDistance);
+				window.setPixelColour(lightCenter.x,lightCenter.y,colour);
+				window.setPixelColour(lightCenter.x + 1,lightCenter.y,colour);
+				window.setPixelColour(lightCenter.x - 1,lightCenter.y,colour);
+				window.setPixelColour(lightCenter.x,lightCenter.y+1,colour);
+				window.setPixelColour(lightCenter.x - 1,lightCenter.y-1,colour);
+			}
 			rayTraced = true;
 			std::cout<< lightCoord[0] << "," << lightCoord[1] << "," << lightCoord[2] << std::endl;
 		}
