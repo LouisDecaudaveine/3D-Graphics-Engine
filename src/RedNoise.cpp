@@ -1039,24 +1039,33 @@ void funkyOrbit(DrawingWindow &window){
 void handleEvent(SDL_Event event, DrawingWindow &window) {
 	if (event.type == SDL_KEYDOWN) {
 		if (event.key.keysym.sym == SDLK_LEFT) {
-			lightCoord[0] -= 0.1;
-			updateLightCloud(usedLight);
-			rayTraced =false;
+			// lightCoord[0] -= 0.1;
+			// updateLightCloud(usedLight);
+			// rayTraced =false;
+			cameraPosition[0]-=0.1;
+
 		}
 		else if (event.key.keysym.sym == SDLK_RIGHT) {
-			lightCoord[0] += 0.1;
-			updateLightCloud(usedLight);
-			rayTraced =false;
+			// lightCoord[0] += 0.1;
+			// updateLightCloud(usedLight);
+			// rayTraced =false;
+			cameraPosition[0]+=0.1;
+
 		}
 		else if (event.key.keysym.sym == SDLK_UP) {
-			lightCoord[2] += 0.1;
-			updateLightCloud(usedLight);
-			rayTraced =false;
+			// lightCoord[2] += 0.1;
+			// updateLightCloud(usedLight);
+			// rayTraced =false;
+			cameraPosition[1]+=0.1;
+
+
 		}
 		else if (event.key.keysym.sym == SDLK_DOWN) {
-			lightCoord[2] -=0.1;
-			updateLightCloud(usedLight);
-			rayTraced =false;
+			// lightCoord[2] -=0.1;
+			// updateLightCloud(usedLight);
+			// rayTraced =false;
+			cameraPosition[0]-=0.1;
+
 		}
 		// else if (event.key.keysym.sym == SDLK_LEFT) cameraPosition[0] -= 0.01;
 		// else if (event.key.keysym.sym == SDLK_RIGHT) cameraPosition[0] += 0.01;
