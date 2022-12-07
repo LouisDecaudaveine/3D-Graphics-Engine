@@ -30,13 +30,16 @@ glm::vec3 upO(0.0f,1.0f,0.0f);
 glm::vec3 forwardO(0.0f,0.0f,1.0f);
 glm::mat3 cameraOrientation(rightO,upO,forwardO);
 
+int recordedFrameCount = 0;
 
 float focalDistance = HEIGHT;
 float xAngle = 0;
 float yAngle = 0;
+float zAngle = 0;
 
 //this might come back to bite if the object gets moved
-glm::vec3 lightCoord(0.0,0.3,1.0);
+// glm::vec3 lightCoord(0.0,0.3,1.0);
+glm::vec3 lightCoord(0.6,0.3,2);
 std::vector<glm::vec3> lightPointCloud;
 std::vector<glm::vec3> usedLight = {lightCoord};
 
@@ -338,7 +341,6 @@ void texturedTriangle(CanvasTriangle &triangle, TextureMap &texture, DrawingWind
 		float splitX = orderedPoints[0].texturePoint.x + textureSplitRatio*(orderedPoints[2].texturePoint.x -orderedPoints[0].texturePoint.x);
 		float splitY = orderedPoints[0].texturePoint.y + textureSplitRatio*(orderedPoints[2].texturePoint.y -orderedPoints[0].texturePoint.y);
 
-		
 		triangles[0].v2().texturePoint = TexturePoint(splitX,splitY);
 		triangles[1].v1().texturePoint = TexturePoint(splitX,splitY);
 
@@ -354,7 +356,6 @@ void texturedTriangle(CanvasTriangle &triangle, TextureMap &texture, DrawingWind
 }
 
 void filledTriangle(CanvasTriangle &triangle, Colour &col, DrawingWindow &window){
-	// Colour outlineCol(255,255,255);
 
 	std::vector<CanvasPoint> orderedPoints = orderedTriangleY(triangle);
 	if(orderedPoints[0].y != orderedPoints[1].y && orderedPoints[0].y != orderedPoints[2].y && orderedPoints[1].y != orderedPoints[2].y){
@@ -453,7 +454,9 @@ void ObjParserTriangle(std::string path, float scale){
 
 		if(myText[0] == 's'){
 			std::vector<std::string> split = splitBySpace(myText);
-			addVertexIndex = std::stoi(split[1]);
+			addVertexIndex = std::stoi(split[1]) -1;
+			currentMatName = "";
+			currentMatName = "";
 		}
 		// ### for usemtl the 2nd element can be of 3 types
 		// ### the first is just a colour
@@ -499,12 +502,11 @@ void ObjParserTriangle(std::string path, float scale){
             }
 			
 			std::array<int, 3> indexes {
-				std::stoi(listOfVertex[1])-1,
-				std::stoi(listOfVertex[2])-1,
-				std::stoi(listOfVertex[3])-1
+				std::stoi(listOfVertex[1])-1 + addVertexIndex,
+				std::stoi(listOfVertex[2])-1 + addVertexIndex,
+				std::stoi(listOfVertex[3])-1 + addVertexIndex
 				}; 
 			triangleNormalIndexes.push_back(indexes);
-
             glm::vec3 v0 = allVertex[indexes[0]];
             glm::vec3 v1 = allVertex[indexes[1]];
             glm::vec3 v2 = allVertex[indexes[2]];
@@ -576,6 +578,16 @@ glm::mat3 yRotation(){
 
 	return rotation;
 }
+
+glm::mat3 zRotation(){
+	glm::vec3 col1(std::cos(zAngle),std::sin(zAngle),0);
+	glm::vec3 col2(-(std::sin(zAngle)),std::cos(zAngle),0);
+	glm::vec3 col3(0,0, 0);
+	glm::mat3 rotation(col1,col2,col3);
+
+	return rotation;
+}
+
 
 void pointAt(glm::vec3 pointTo){
 	glm::vec3 vertical(0,1,0);
@@ -739,12 +751,12 @@ glm::vec3 specularColour(glm::vec3 colour, glm::vec3 pointToCamera, glm::vec3 po
 }
 //raytrace states:
 //3: gouraud shading
-//0: phong shading
+//2: phong shading
 //1: bump mapping
-
+float threshScalar = 0.05f;
 uint8_t rayTracedState = 0;
 glm::vec3 recurssiveRayTrace(RayTriangleIntersection point, glm::vec3 rayDirection, int recDepth, float exposureRate){
-	if(rayTracedState == 0 || rayTracedState == 1){
+	if(rayTracedState == 2 || rayTracedState == 1){
 		point.normal = glm::normalize(
 			(point.v * point.intersectedTriangle.verticesNormals[2]) + 
 			(point.u * point.intersectedTriangle.verticesNormals[1]) + 
@@ -773,8 +785,8 @@ glm::vec3 recurssiveRayTrace(RayTriangleIntersection point, glm::vec3 rayDirecti
 		colour[1] = float((packedColour & 0x0000ff00)>>8);
 		colour[0] = float((packedColour & 0x00ff0000)>>16);
 	}
-	float threshHoldValue = (colour[0] + colour[1] + colour[2]) *0.05f;
-	glm::vec3 threshHoldColour = colour * 0.05f;
+	float threshHoldValue = (colour[0] + colour[1] + colour[2]) *threshScalar;
+	glm::vec3 threshHoldColour = colour * threshScalar;
 
 	// soft shadows
 	float averageExposure = 0;
@@ -784,7 +796,7 @@ glm::vec3 recurssiveRayTrace(RayTriangleIntersection point, glm::vec3 rayDirecti
 		pointToLightRay = glm::normalize(pointToLightRay);
 		RayTriangleIntersection pointTolightIntersection = getClosestIntersection(pointToLightRay, point.intersectionPoint);
 		if(pointTolightIntersection.distanceFromCamera >= pointToLightDistance) averageExposure += 1.0f;
-		else averageExposure += 0.05f;
+		else averageExposure += threshScalar;
 	}
 	averageExposure = averageExposure/usedLight.size();
 
@@ -792,23 +804,23 @@ glm::vec3 recurssiveRayTrace(RayTriangleIntersection point, glm::vec3 rayDirecti
 	float pointToLightDistance = glm::length(pointToLightRay);
 	pointToLightRay = glm::normalize(pointToLightRay);
 	RayTriangleIntersection pointTolightIntersection = getClosestIntersection(pointToLightRay, point.intersectionPoint);
-	if( averageExposure > 0.05f){
-		glm::vec3 reflectionDirection = pointReflection(point.normal, (rayDirection));
+	glm::vec3 reflectionDirection = pointReflection(point.normal, (rayDirection));
 		//for reflective surfaces
 		if(point.intersectedTriangle.isReflective){
 			RayTriangleIntersection newPoint =  getClosestIntersection(reflectionDirection, point.intersectionPoint);
 			return recurssiveRayTrace(newPoint, reflectionDirection, recDepth++, (averageExposure + exposureRate)/2);
 		}
+	if( averageExposure > threshScalar){
 		
 		if(rayTracedState == 3){
 			std::array<float,2> gouraudVals = gouraudShading(point);
 			// std::cout << gouraudVals[0];
 			colour = colour * gouraudVals[0];
-			// std::cout<< colour[0] << "," << colour[1] << "," << colour[2] << std::endl;
 			if(recDepth == 0){
 				for(int i = 0; i < 3; i++){
 					colour[i] += std::floor(254* gouraudVals[1]);
 					if(colour[i] > 255) colour[i] = 254;
+					if(colour[i] < 0) colour[i] = 0;
 				}
 			}
 		}
@@ -883,18 +895,147 @@ void back(){
 //##############################################
 //##############################################
 
+
+//###########THREADING################
+//####################################
+bool rayTraced = true;
+void vertexColourUpdate(){
+	std::vector<ModelTriangle> updatedModels;
+	for(ModelTriangle trig : modelTriangles){
+		ModelTriangle triangle = trig;
+		for(int i = 0; i< 3; i++){
+			glm::vec3 vertexToCamera = glm::normalize(cameraPosition- triangle.vertices[i]);
+			glm::vec3 vertexToLight = lightCoord-triangle.vertices[i];
+			float proximityLight = 0.5f * proximityLighting(glm::length(vertexToLight));
+			float angleToLight = 0.5f * std::pow(angleOfIncidence(triangle.verticesNormals[i], glm::normalize(vertexToLight)),4);
+			float specularValue = gouraudSpecular(vertexToCamera, pointReflection(triangle.verticesNormals[i], glm::normalize(-1.0f * vertexToLight)));
+			triangle.verticesLighting[i][0] = proximityLight + angleToLight;
+			triangle.verticesLighting[i][1] = specularValue;
+		}
+		updatedModels.push_back(triangle);
+
+	}
+	modelTriangles = updatedModels;
+		
+}
+
+//this will only work if threadCount and Width are multiples of eachother
+//(or whatever the term is)
+void threadedRender(uint16_t threadCount, DrawingWindow &window){
+	// gouraud shading
+	if(rayTracedState == 3 ){
+		// update all the vertex colours
+		vertexColourUpdate();
+	}
+	std::vector<std::thread> threads;
+	int segmentHeight = std::floor(HEIGHT/threadCount);
+	int rest = HEIGHT % threadCount;
+	uint32_t world[WIDTH][HEIGHT];
+
+	//assigning the threads to rayTrace sections
+	for(uint32_t t=0; t<threadCount; t++){
+		int yStart = t*segmentHeight;
+		int yEnd = yStart + segmentHeight;
+		if(t == threadCount-1) yEnd += rest;
+		
+		threads.push_back(std::thread(rayTraceReRefactored,std::ref(world),yStart,yEnd));
+	}
+
+	for(std::thread &t : threads){
+        if(t.joinable()) t.join();
+    }
+	for(size_t x=0; x<WIDTH; x++){
+		for(size_t y=0; y<HEIGHT; y++){
+			window.setPixelColour(x,y,world[x][y]);
+		}
+	}
+}
+void rayDraw(DrawingWindow &window){
+	
+	threadedRender(8,window);
+	updateLightCloud(usedLight);
+	// uint32_t colour = (255 << 24) + (int(255)<<16) + (int(255)<<8) + int(224);
+	// // coolVisual-= 0.05;
+	// for(glm::vec3 light : usedLight){
+	// 	CanvasPoint lightCenter = getCanvasIntersectionPoint(cameraPosition,light, focalDistance);
+	// 	window.setPixelColour(lightCenter.x,lightCenter.y,colour);
+	// 	window.setPixelColour(lightCenter.x + 1,lightCenter.y,colour);
+	// 	window.setPixelColour(lightCenter.x - 1,lightCenter.y,colour);
+	// 	window.setPixelColour(lightCenter.x,lightCenter.y+1,colour);
+	// 	window.setPixelColour(lightCenter.x - 1,lightCenter.y-1,colour);
+	// }
+	window.renderFrame();
+	rayTraced = true;
+}
+
+
+
+
 void orbit(DrawingWindow &window){
 	
 	cameraPosition[0] = 4 * cos(orbitState);
 	cameraPosition[2] = 4 * sin(orbitState);
 	pointAt(origin);
-	// filledFrame(cameraPosition,focalDistance,window);
-	wireFrame(cameraPosition,focalDistance, window);
+	filledFrame(cameraPosition,focalDistance,window);
 	orbitState+= 0.02;
-
-	// RayTracedRefactored(window);
+	window.savePPM("outputImgs/img" + std::to_string(recordedFrameCount) + ".ppm");
+	recordedFrameCount++;
 }
-bool rayTraced = true;
+
+void draw(DrawingWindow &window){
+	window.clearPixels();
+	if(drawState == 0) filledFrame(cameraPosition,focalDistance,window);
+	if(drawState == 1) orbit(window);
+	if(drawState == 2) oneStepRender(window);
+	if(drawState == 3) wireFrame(cameraPosition,focalDistance, window);
+	window.renderFrame();
+}
+
+
+float lightOrbitState = 0.0f;
+
+void lightZorbit(DrawingWindow &window){
+	lightCoord[0] = 0.5f *  cos(lightOrbitState);
+	lightCoord[1] = 0.5f * sin(lightOrbitState) + 0.2;
+	lightOrbitState+= 0.1; 
+	rayTracedState = 4 - std::floor(0.5f* lightOrbitState/M_PI);
+	rayDraw(window);
+
+	
+	// if(rayTraced)window.savePPM("outputImgs/img" + std::to_string(recordedFrameCount) + ".ppm");
+	// recordedFrameCount++;
+}
+void panFromCenter(DrawingWindow &window){
+	cameraPosition = glm::vec3(0,0,2);
+	xAngle += 0.01;
+	cameraOrientation = xRotation();
+	rayDraw(window);
+	if(rayTraced)window.savePPM("outputImgs/img" + std::to_string(recordedFrameCount) + ".ppm");
+	recordedFrameCount++;
+}
+
+void zipLineIn(DrawingWindow &window){
+	cameraPosition[2] -= 0.1;
+	lightCoord[0] += 0.015;
+	rayDraw(window);
+	if(rayTraced)window.savePPM("outputImgs/img" + std::to_string(recordedFrameCount) + ".ppm");
+	recordedFrameCount++;
+}
+
+float funkyState = 0; 
+void funkyOrbit(DrawingWindow &window){
+	funkyState+= 0.01;
+	cameraPosition[0] = 4*cos(funkyState);
+	cameraPosition[1] = 4*-cos(funkyState);
+	cameraPosition[2] = 4*sin(funkyState);
+	pointAt(origin);
+	rayDraw(window);
+	if(rayTraced)window.savePPM("outputImgs/img" + std::to_string(recordedFrameCount) + ".ppm");
+	recordedFrameCount++;
+}
+
+
+
 void handleEvent(SDL_Event event, DrawingWindow &window) {
 	if (event.type == SDL_KEYDOWN) {
 		if (event.key.keysym.sym == SDLK_LEFT) {
@@ -970,91 +1111,17 @@ void handleEvent(SDL_Event event, DrawingWindow &window) {
 			
 		}
 	} else if (event.type == SDL_MOUSEBUTTONDOWN) {
-		window.savePPM("output.ppm");
-		window.saveBMP("output.bmp");
-	}
-}
-
-
-void draw(DrawingWindow &window){
-	window.clearPixels();
-	if(drawState == 0) filledFrame(cameraPosition,focalDistance,window);
-	if(drawState == 1) orbit(window);
-	if(drawState == 2) oneStepRender(window);
-	if(drawState == 3)wireFrame(cameraPosition,focalDistance, window);
-	
-	// wireFrame(cameraPosition, focalDistance, window);
-
-
-	// //canvas triangle
-	// CanvasPoint v0(160, 10);
-	// CanvasPoint v1(300, 230);
-	// CanvasPoint v2(10, 150);
-	// CanvasTriangle trig(v0,v1,v2);
-
-	// //texture triangle
-	// CanvasPoint v3(195, 5);
-	// CanvasPoint v4(395, 380);
-	// CanvasPoint v5 (65, 330);
-	// CanvasTriangle trigTexture(v3,v4,v5);
-
-	// std::string filePath = "texture.ppm";
-	// TextureMap textureMap(filePath);
-	// texturedTriangle(trig,trigTexture,textureMap,window);
-}
-
-
-//###########THREADING################
-//####################################
-void vertexColourUpdate(){
-	std::vector<ModelTriangle> updatedModels;
-	for(ModelTriangle trig : modelTriangles){
-		ModelTriangle triangle = trig;
-		for(int i = 0; i< 3; i++){
-			glm::vec3 vertexToCamera = glm::normalize(cameraPosition- triangle.vertices[i]);
-			glm::vec3 vertexToLight = lightCoord-triangle.vertices[i];
-			float proximityLight = 0.5f * proximityLighting(glm::length(vertexToLight));
-			float angleToLight = 0.5f * std::pow(angleOfIncidence(triangle.verticesNormals[i], glm::normalize(vertexToLight)),4);
-			float specularValue = gouraudSpecular(vertexToCamera, pointReflection(triangle.verticesNormals[i], glm::normalize(-1.0f * vertexToLight)));
-			triangle.verticesLighting[i][0] = proximityLight + angleToLight;
-			triangle.verticesLighting[i][1] = specularValue;
-		}
-		updatedModels.push_back(triangle);
-
-	}
-	modelTriangles = updatedModels;
 		
-}
-
-//this will only work if threadCount and Width are multiples of eachother
-//(or whatever the term is)
-void threadedRender(uint16_t threadCount, DrawingWindow &window){
-	// gouraud shading
-	if(rayTracedState == 3 ){
-		// update all the vertex colours
-		vertexColourUpdate();
-	}
-	std::vector<std::thread> threads;
-	int segmentHeight = std::floor(HEIGHT/threadCount);
-	int rest = HEIGHT % threadCount;
-	uint32_t world[WIDTH][HEIGHT];
-
-	//assigning the threads to rayTrace sections
-	for(uint32_t t=0; t<threadCount; t++){
-		int yStart = t*segmentHeight;
-		int yEnd = yStart + segmentHeight;
-		if(t == threadCount-1) yEnd += rest;
-		
-		threads.push_back(std::thread(rayTraceReRefactored,std::ref(world),yStart,yEnd));
-	}
-
-	for(std::thread &t : threads){
-        if(t.joinable()) t.join();
-    }
-	for(size_t x=0; x<WIDTH; x++){
-		for(size_t y=0; y<HEIGHT; y++){
-			window.setPixelColour(x,y,world[x][y]);
-		}
+		int xMouse, yMouse;
+		SDL_GetMouseState(&xMouse,&yMouse);
+		uint32_t bli =  window.getPixelColour(xMouse,yMouse);
+		glm::vec3 colour;
+		colour[2] = float(bli & 0x000000ff);
+		colour[1] = float((bli & 0x0000ff00)>>8);
+		colour[0] = float((bli & 0x00ff0000)>>16);
+		std::cout << colour[0] << "," << colour[1] << "," << colour[2] << std::endl;
+		// window.savePPM("output.ppm");
+		// window.saveBMP("output.bmp");
 	}
 }
 
@@ -1064,27 +1131,19 @@ void threadedRender(uint16_t threadCount, DrawingWindow &window){
 int main(int argc, char *argv[]) {
 	DrawingWindow window = DrawingWindow(WIDTH, HEIGHT, false);
 	SDL_Event event;
-	rayTracedState = 5;
-
+	rayTracedState = 1;
+	xAngle = -M_PI;
+	yAngle = 3*M_PI/2;
 	
 	setBufferToZero();
 	ObjParserMaterial("cornell-box.mtl");
 	ObjParserTriangle("cornell-box.obj", 0.35);
-	lightObjParser("sphere.obj", 0.06);
-
-	glm::vec3 averagePos(0,0,0); 
-	for(glm::vec3 vertex : allVertex){
-		averagePos  = averagePos + vertex;
-	}
-	
-	isSoftShading = true;
+	// ObjParserTriangle("sphere.obj", 0.35);
+	lightObjParser("sphere.obj", 0.03);
+	lightCoord = glm::vec3(0.0,0.3,2);
+	isSoftShading = false;
 	if(isSoftShading) usedLight = lightPointCloud;
 	updateLightCloud(usedLight);
-
-	uint32_t colour = (255 << 24) + (int(255)<<16) + (int(0)<<8) + int(150);
-	// wireFrame(cameraPosition,focalDistance,window);
-	// filledFrame(cameraPosition,focalDistance,window);
-	// consoleTriangles();
 
 	while (true) {
 
@@ -1094,20 +1153,11 @@ int main(int argc, char *argv[]) {
 			rayTraced = false;
 		}
 		else if(!rayTraced && drawState == 4){
-			threadedRender(8,window);
-			// std::cout<< countBehind << std::endl;
-			// countBehind = 0;
-			coolVisual-= 0.05;
-			for(glm::vec3 light : usedLight){
-				CanvasPoint lightCenter = getCanvasIntersectionPoint(cameraPosition,light, focalDistance);
-				window.setPixelColour(lightCenter.x,lightCenter.y,colour);
-				window.setPixelColour(lightCenter.x + 1,lightCenter.y,colour);
-				window.setPixelColour(lightCenter.x - 1,lightCenter.y,colour);
-				window.setPixelColour(lightCenter.x,lightCenter.y+1,colour);
-				window.setPixelColour(lightCenter.x - 1,lightCenter.y-1,colour);
-			}
-			rayTraced = true;
-			std::cout<< lightCoord[0] << "," << lightCoord[1] << "," << lightCoord[2] << std::endl;
+			rayDraw(window);
+			// funkyOrbit(window);
+			// panFromCenter(window);
+			// zipLineIn(window);
+			
 		}
 		
 		setBufferToZero();
@@ -1117,6 +1167,6 @@ int main(int argc, char *argv[]) {
 		if (window.pollForInputEvents(event)) handleEvent(event, window);
 		// draw(window);
 		// Need to render the frame at the end, or nothing actually gets shown on the screen !
-		window.renderFrame();
+		rayTraced = false;
 	}
 }
